@@ -1,13 +1,20 @@
 #include "WiFiManager.h"
 #include <WiFi.h>
+#include <WiFiClient.h>
 #include <Preferences.h>
 #include <ESPmDNS.h>
 #include "WebServer.h"  // For web server control
 
-// ESP-IDF includes for advanced WiFi power management (SuperMini antenna fix)
+// ESP-IDF includes for advanced WiFi power management
 #ifdef ESP_IDF_VERSION_MAJOR
     #include "esp_wifi.h"
+    #include "esp_wifi_types.h"
     #include "esp_err.h"
+    #include "lwip/icmp.h"
+    #include "lwip/inet_chksum.h"
+    #include "lwip/raw.h"
+    #include "lwip/ip_addr.h"
+    #include "ping/ping_sock.h"
 #endif
 
 Preferences wifiPrefs;
@@ -243,6 +250,22 @@ void setupWiFi() {
     WiFi.mode(WIFI_OFF);
     delay(500); // Longer delay for complete reset
     
+    // Enable WiFi persistent mode for automatic reconnection
+    WiFi.persistent(true);
+    WiFi.setAutoReconnect(true);
+    Serial.println("WiFi auto-reconnect enabled for connection stability");
+    
+    // Configure WiFi for battery-optimized stability
+    #ifdef ESP_IDF_VERSION_MAJOR
+        // Listen interval: how many beacons to skip before waking (lower = more stable, higher = more battery)
+        // 3 beacons = good balance for battery devices (default is often 1-3)
+        wifi_config_t conf;
+        esp_wifi_get_config(WIFI_IF_STA, &conf);
+        conf.sta.listen_interval = 3; // Wake every 3 beacons for router keep-alive
+        esp_wifi_set_config(WIFI_IF_STA, &conf);
+        Serial.println("WiFi listen interval: 3 beacons (battery-optimized stability)");
+    #endif
+    
     // Apply SuperMini antenna fix for boards with poor antenna design
     applySuperMiniAntennaFix();
     
@@ -250,13 +273,29 @@ void setupWiFi() {
     if (strlen(ssid) > 0) {
         Serial.println("=== ATTEMPTING STA CONNECTION ===");
         Serial.println("Found stored credentials for: " + String(ssid));
-        Serial.println("Trying STA mode first (power optimized)...");
+        Serial.println("Trying STA mode first...");
         
         // Try STA mode first for lower power consumption
         WiFi.mode(WIFI_STA);
-        delay(1000); // Ensure mode switch is stable
+        delay(500); // Brief delay for mode switch
         
-        // ANTENNA FIX: Reapply power settings after mode switch for SuperMini boards
+        #ifdef ESP_IDF_VERSION_MAJOR
+            // Set WiFi protocol to include long-range mode for better weak-signal performance
+            // Use 11b/g/n + LR for maximum compatibility and range
+            esp_err_t proto_result = esp_wifi_set_protocol(WIFI_IF_STA, 
+                WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR);
+            if (proto_result == ESP_OK) {
+                Serial.println("WiFi Long Range (LR) mode enabled for weak signal areas");
+            } else {
+                // LR mode not available on all chips, fall back to standard protocols
+                esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
+                Serial.println("Using standard WiFi protocols (11b/g/n)");
+            }
+        #endif
+        
+        delay(500); // Additional delay for protocol change
+        
+        // ANTENNA FIX: Reapply power settings after mode switch
         // Mode switch can reset power levels, so reapply the fix
         if (ENABLE_SUPERMINI_ANTENNA_FIX) {
             applySuperMiniAntennaFix();
@@ -406,7 +445,10 @@ void maintainWiFi() {
     }
     
     static unsigned long lastMaintenance = 0;
-    const unsigned long maintenanceInterval = 15000; // Every 15 seconds for more responsive switching
+    static unsigned long lastDisconnectTime = 0;
+    static int consecutiveDisconnects = 0;
+    const unsigned long maintenanceInterval = 15000; // Every 15 seconds
+    const unsigned long disconnectCooldown = 60000; // 1 minute cooldown after repeated failures
     
     if (millis() - lastMaintenance >= maintenanceInterval) {
         lastMaintenance = millis();
@@ -417,7 +459,16 @@ void maintainWiFi() {
         if (currentMode == WIFI_STA) {
             // We're in STA mode - check if connection is still healthy
             if (WiFi.status() != WL_CONNECTED) {
-                Serial.println("WARNING: STA connection lost! Attempting immediate reconnection...");
+                Serial.println("WARNING: STA connection lost! Attempting reconnection...");
+                
+                // Track disconnect frequency to prevent reconnection loops
+                consecutiveDisconnects++;
+                lastDisconnectTime = millis();
+                
+                // If too many consecutive disconnects, wait longer before trying AP fallback
+                if (consecutiveDisconnects >= 3) {
+                    Serial.printf("Multiple disconnects detected (%d). Giving auto-reconnect more time...\n", consecutiveDisconnects);
+                }
                 
                 // Try to reconnect to saved credentials
                 char ssid[33] = {0};
@@ -426,28 +477,55 @@ void maintainWiFi() {
                 
                 if (strlen(ssid) > 0) {
                     Serial.println("Attempting to reconnect to: " + String(ssid));
-                    WiFi.begin(ssid, password);
                     
-                    // Wait briefly for reconnection - reduced timeout for faster fallback
+                    // Don't call WiFi.begin() if auto-reconnect is already trying
+                    // Just wait and let the ESP32's built-in reconnect mechanism work
+                    if (WiFi.getAutoReconnect()) {
+                        Serial.println("Auto-reconnect active - waiting for ESP32 to reconnect...");
+                    } else {
+                        WiFi.begin(ssid, password);
+                    }
+                    
+                    // Wait for reconnection - longer timeout for repeated failures
+                    int maxAttempts = (consecutiveDisconnects >= 3) ? 40 : 20; // 20s for repeated failures
                     int attempts = 0;
-                    while (WiFi.status() != WL_CONNECTED && attempts < 6) { // 3 second timeout
+                    while (WiFi.status() != WL_CONNECTED && attempts < maxAttempts) {
                         delay(500);
                         Serial.print(".");
                         attempts++;
+                        
+                        // Check if reconnection succeeded early
+                        if (WiFi.status() == WL_CONNECTED) {
+                            break;
+                        }
                     }
                     
                     if (WiFi.status() == WL_CONNECTED) {
-                        Serial.println("\nSTA reconnection successful");
+                        Serial.println("\nSTA reconnection successful!");
                         Serial.println("IP: " + WiFi.localIP().toString());
+                        consecutiveDisconnects = 0; // Reset counter on success
                     } else {
-                        Serial.println("\nSTA reconnection failed - switching to AP mode immediately");
-                        switchToAPMode();
+                        Serial.printf("\nSTA reconnection failed after %d attempts\n", attempts);
+                        
+                        // Only switch to AP mode if we've had repeated failures
+                        if (consecutiveDisconnects >= 5) {
+                            Serial.println("Too many failed reconnects - switching to AP mode");
+                            switchToAPMode();
+                            consecutiveDisconnects = 0; // Reset counter
+                        } else {
+                            Serial.println("Will retry on next maintenance cycle...");
+                        }
                     }
                 } else {
                     Serial.println("No stored credentials - switching to AP mode");
                     switchToAPMode();
                 }
             } else {
+                // Connection is healthy - reset disconnect counter
+                if (consecutiveDisconnects > 0) {
+                    Serial.println("Connection restored after previous disconnects");
+                    consecutiveDisconnects = 0;
+                }
                 Serial.println("STA mode healthy - connection maintained");
                 Serial.println("Connected to: " + WiFi.SSID() + " | IP: " + WiFi.localIP().toString() + " | RSSI: " + String(WiFi.RSSI()) + "dBm");
             }
@@ -463,10 +541,18 @@ void maintainWiFi() {
             switchToAPMode();
         }
         
-        // Ensure WiFi sleep stays enabled for BLE coexistence
-        if (!WiFi.getSleep()) {
-            Serial.println("WARNING: WiFi sleep was disabled! Re-enabling for BLE coexistence...");
-            WiFi.setSleep(true);
+        // Monitor WiFi power save mode (check periodically but don't spam logs)
+        static unsigned long lastPowerCheck = 0;
+        if (millis() - lastPowerCheck >= 300000) { // Check every 5 minutes
+            #ifdef ESP_IDF_VERSION_MAJOR
+                wifi_ps_type_t current_ps;
+                esp_wifi_get_ps(&current_ps);
+                if (current_ps != WIFI_POWER_SAVE_MODE) {
+                    Serial.println("WARNING: WiFi power save mode changed! Restoring...");
+                    esp_wifi_set_ps(WIFI_POWER_SAVE_MODE);
+                }
+            #endif
+            lastPowerCheck = millis();
         }
         
         // Print status for debugging
@@ -576,33 +662,38 @@ void switchToAPMode() {
     }
 }
 
-// Apply SuperMini antenna fix for boards with poor antenna design
+// Apply antenna and power optimization for better WiFi performance
 void applySuperMiniAntennaFix() {
     if (!ENABLE_SUPERMINI_ANTENNA_FIX) {
-        Serial.println("SuperMini antenna fix disabled in configuration");
+        Serial.println("Antenna optimization disabled in configuration");
         return;
     }
     
-    Serial.println("Applying SuperMini antenna fix...");
+    Serial.println("Applying antenna and power optimization...");
     
-    // Arduino framework maximum power
-    WiFi.setTxPower(WIFI_POWER_19_5dBm);
-    Serial.println("Arduino framework power: 19.5dBm");
-    
-    // ESP-IDF level power boost (the key fix from forums)
     #ifdef ESP_IDF_VERSION_MAJOR
-        esp_err_t result = esp_wifi_set_max_tx_power(40); // 10dBm (40 = 4 * 10dBm)
-        if (result == ESP_OK) {
-            Serial.println("ESP-IDF max TX power: 10dBm (touch-antenna fix applied)");
+        // Set maximum TX power for better range (84 = 21dBm, max allowed)
+        esp_err_t pwr_result = esp_wifi_set_max_tx_power(84);
+        if (pwr_result == ESP_OK) {
+            Serial.println("ESP-IDF TX power set to maximum (21dBm)");
+        } else if (pwr_result == ESP_ERR_WIFI_NOT_INIT) {
+            Serial.println("TX power setting deferred - WiFi not initialized yet");
         } else {
-            Serial.printf("ESP-IDF power setting failed: %s\n", esp_err_to_name(result));
+            Serial.printf("ESP-IDF TX power setting: %s\n", esp_err_to_name(pwr_result));
         }
-    #else
-        Serial.println("ESP-IDF functions not available - using Arduino framework only");
+        
+        // For ESP32-C6: Use esp_phy API if available for antenna config
+        // The internal antenna should be default, but we ensure max power is set
+        #if defined(CONFIG_IDF_TARGET_ESP32C6)
+            Serial.println("ESP32-C6 detected - internal antenna is default");
+        #endif
     #endif
     
-    Serial.println("SuperMini antenna optimization complete");
-    Serial.println("   This fixes the common 'touch antenna to work' issue");
+    // Arduino framework maximum power (works as backup and confirmation)
+    WiFi.setTxPower(WIFI_POWER_19_5dBm);
+    Serial.println("Arduino framework TX power: 19.5dBm (max)");
+    
+    Serial.println("Antenna optimization complete");
 }
 
 // Get current WiFi signal strength in dBm

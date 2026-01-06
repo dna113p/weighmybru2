@@ -9,6 +9,20 @@
 // Set to true to enable maximum power mode for boards with poor antenna design
 #define ENABLE_SUPERMINI_ANTENNA_FIX true
 
+// WiFi Power Save Mode Configuration
+// WIFI_PS_NONE (0)    - No power save, maximum stability, highest power consumption
+// WIFI_PS_MIN_MODEM (1) - Minimum modem sleep, good balance (RECOMMENDED for battery devices)
+// WIFI_PS_MAX_MODEM (2) - Maximum modem sleep, best battery, may cause disconnects
+//
+// IMPORTANT: Your DNA2.4 router has VERY aggressive client timeout settings
+// Even with WIFI_PS_NONE, you're getting disconnects due to:
+//   - Weak signal (-74 to -81 dBm - move router closer or vice versa)
+//   - Router WiFi 6 power save detection (may flag ESP32 as "sleeping")
+//   - Strict association timeouts
+// 
+// RECOMMENDED: Move the scale closer to the router OR use AP mode for configuration only
+#define WIFI_POWER_SAVE_MODE WIFI_PS_NONE
+
 void setupWiFi();
 void saveWiFiCredentials(const char* ssid, const char* password);
 void clearWiFiCredentials(); // Clear stored WiFi credentials

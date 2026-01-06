@@ -3,6 +3,10 @@
 #include <LittleFS.h>
 #include <ESPmDNS.h>
 #include <esp_sleep.h>
+#ifdef ESP_IDF_VERSION_MAJOR
+  #include "esp_wifi.h"
+  #include "esp_wifi_types.h"
+#endif
 #include "WebServer.h"
 #include "Scale.h"
 #include "WiFiManager.h"
@@ -129,12 +133,43 @@ void setup() {
   //Wait for BLE to finish intitalizing before starting WiFi
   delay(1500); 
   
-  // ALWAYS enable WiFi power management for optimal battery life
-  // This works regardless of WiFi mode (STA/AP/OFF) and should be set early
-  WiFi.setSleep(true);
-  Serial.println("WiFi power management enabled for battery optimization");
-  
   setupWiFi();
+  
+  // Configure WiFi power management AFTER WiFi is initialized
+  // Use advanced modem sleep for balance between battery life and stability
+  Serial.println("=== WiFi Power Management ===");
+  
+  #ifdef ESP_IDF_VERSION_MAJOR
+    esp_err_t ps_result = esp_wifi_set_ps(WIFI_POWER_SAVE_MODE);
+    if (ps_result == ESP_OK) {
+      const char* mode_name;
+      switch(WIFI_POWER_SAVE_MODE) {
+        case WIFI_PS_NONE: mode_name = "NONE (max stability, high power)"; break;
+        case WIFI_PS_MIN_MODEM: mode_name = "MIN_MODEM (balanced - RECOMMENDED)"; break;
+        case WIFI_PS_MAX_MODEM: mode_name = "MAX_MODEM (max battery, may disconnect)"; break;
+        default: mode_name = "UNKNOWN"; break;
+      }
+      Serial.printf("WiFi power save mode: %s\n", mode_name);
+      
+      // Also set Arduino framework WiFi sleep to match
+      bool enable_sleep = (WIFI_POWER_SAVE_MODE != WIFI_PS_NONE);
+      WiFi.setSleep(enable_sleep);
+      Serial.printf("Arduino WiFi.setSleep(%s) to match ESP-IDF setting\n", enable_sleep ? "true" : "false");
+    } else {
+      Serial.printf("WARNING: Failed to set WiFi power save mode: %s\n", esp_err_to_name(ps_result));
+      // Fallback to Arduino framework - match the configured mode
+      bool enable_sleep = (WIFI_POWER_SAVE_MODE != WIFI_PS_NONE);
+      WiFi.setSleep(enable_sleep);
+      Serial.printf("Using Arduino WiFi.setSleep(%s) fallback\n", enable_sleep ? "true" : "false");
+    }
+  #else
+    // Fallback for non-ESP-IDF builds - match the configured mode
+    bool enable_sleep = (WIFI_POWER_SAVE_MODE != WIFI_PS_NONE);
+    WiFi.setSleep(enable_sleep);
+    Serial.printf("WiFi sleep: %s (Arduino framework)\n", enable_sleep ? "ENABLED" : "DISABLED");
+  #endif
+  
+  Serial.println("============================");
 
   // Wait for WiFi to fully stabilize after BLE is already running
   delay(1500);
