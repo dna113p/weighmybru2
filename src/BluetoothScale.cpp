@@ -192,29 +192,39 @@ void BluetoothScale::initializeBLE() {
         throw std::runtime_error("Failed to get advertising object");
     }
     
-    // Add service UUID to advertising data
+    // Configure advertising data
     advertising->addServiceUUID(SERVICE_UUID);
-    
-    // Enable scan response to include device name
     advertising->setScanResponse(true);
+    advertising->setAppearance(0x00);  // Generic appearance
     
     // Set connection interval preferences (in units of 1.25ms)
-    // 0x06 = 7.5ms min, 0x12 = 22.5ms max
+    // 0x06 = 7.5ms min, 0x12 = 22.5ms max  
     advertising->setMinPreferred(0x06);
     advertising->setMaxPreferred(0x12);
     
+    // Set minimum and maximum advertising intervals (in units of 0.625ms)
+    // 0x20 = 20ms, 0x40 = 40ms - balance between power and discoverability
+    advertising->setMinInterval(0x20);
+    advertising->setMaxInterval(0x40);
+    
+    Serial.println("BluetoothScale: Advertising configured:");
+    Serial.println("  - Service UUID: " + String(SERVICE_UUID));
+    Serial.println("  - Device Name: WeighMyBru");
+    Serial.println("  - Scan Response: Enabled");
     Serial.println("BluetoothScale: BLE initialization completed successfully");
 }
 
 void BluetoothScale::startAdvertising() {
     if (advertising) {
-        BLEDevice::startAdvertising();
+        advertising->start();
+        Serial.println("BluetoothScale: Advertising started");
     }
 }
 
 void BluetoothScale::stopAdvertising() {
     if (advertising) {
-        BLEDevice::stopAdvertising();
+        advertising->stop();
+        Serial.println("BluetoothScale: Advertising stopped");
     }
 }
 
@@ -229,7 +239,7 @@ void BluetoothScale::update() {
     // Handle connection state changes
     if (!deviceConnected && oldDeviceConnected) {
         delay(500); // Give the bluetooth stack time to get ready
-        BLEDevice::startAdvertising();
+        startAdvertising();
         Serial.println("BluetoothScale: Start advertising after disconnect");
         oldDeviceConnected = deviceConnected;
     }
@@ -258,6 +268,13 @@ void BluetoothScale::update() {
         if (now - lastHeartbeat >= HEARTBEAT_INTERVAL) {
             sendHeartbeat();
             lastHeartbeat = now;
+        }
+    } else {
+        // Periodic advertising status (every 10 seconds when not connected)
+        static uint32_t lastAdStatus = 0;
+        if (now - lastAdStatus >= 10000) {
+            Serial.println("BluetoothScale: Advertising active, waiting for connection...");
+            lastAdStatus = now;
         }
     }
 }
@@ -501,7 +518,7 @@ void BluetoothScale::processIncomingMessage(uint8_t* data, size_t length) {
 // BLE Server Callbacks
 void BluetoothScale::onConnect(BLEServer* pServer) {
     deviceConnected = true;
-    BLEDevice::stopAdvertising();
+    stopAdvertising();
     Serial.println("BluetoothScale: Device connected");
 }
 
