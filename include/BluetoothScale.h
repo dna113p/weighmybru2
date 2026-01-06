@@ -1,8 +1,10 @@
 #pragma once
 
-#include <NimBLEDevice.h>
-#include <NimBLEServer.h>
-#include <NimBLEUtils.h>
+#include "BoardConfig.h"
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h>
 #include "Scale.h"
 
 class Display; // Forward declaration
@@ -19,7 +21,7 @@ enum class BeanConquerorCommand : uint8_t {
   TIMER_RESET = 0x04
 };
 
-class BluetoothScale : public NimBLEServerCallbacks, public NimBLECharacteristicCallbacks {
+class BluetoothScale : public BLEServerCallbacks, public BLECharacteristicCallbacks {
 public:
     BluetoothScale();
     ~BluetoothScale();
@@ -38,21 +40,21 @@ public:
     String getBluetoothConnectionInfo(); // Get detailed BLE connection information
     
     // BLE Server callbacks
-    void onConnect(NimBLEServer* pServer) override;
-    void onDisconnect(NimBLEServer* pServer) override;
+    void onConnect(BLEServer* pServer) override;
+    void onDisconnect(BLEServer* pServer) override;
     
     // BLE Characteristic callbacks
-    void onWrite(NimBLECharacteristic* pCharacteristic) override;
+    void onWrite(BLECharacteristic* pCharacteristic) override;
 
 private:
     Scale* scale;
     Display* display; // Reference to display for timer control
-    NimBLEServer* server;
-    NimBLEService* service;
-    NimBLECharacteristic* weightCharacteristic;          // Bean Conqueror (simple float)
-    NimBLECharacteristic* gaggiMateWeightCharacteristic; // GaggiMate (WeighMyBru protocol)
-    NimBLECharacteristic* commandCharacteristic;
-    NimBLEAdvertising* advertising;
+    BLEServer* server;
+    BLEService* service;
+    BLECharacteristic* weightCharacteristic;          // Bean Conqueror (simple float)
+    BLECharacteristic* gaggiMateWeightCharacteristic; // GaggiMate (WeighMyBru protocol)
+    BLECharacteristic* commandCharacteristic;
+    BLEAdvertising* advertising;
     
     bool deviceConnected;
     bool oldDeviceConnected;

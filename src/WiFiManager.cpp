@@ -267,12 +267,15 @@ void setupWiFi() {
         
         // Wait for connection with reasonable timeout
         int connectionAttempts = 0;
-        const int maxAttempts = 24; // 12 seconds total - more time for reliable connection
+        const int maxAttempts = 20; // 10 seconds total - reduced to prevent watchdog timeout
         
         Serial.print("Connecting");
         while (WiFi.status() != WL_CONNECTED && connectionAttempts < maxAttempts) {
-            delay(500);
-            Serial.print(".");
+            delay(100);  // Shorter delay to check more frequently
+            if (connectionAttempts % 5 == 0) {
+                Serial.print(".");
+                yield(); // Feed the watchdog
+            }
             connectionAttempts++;
             
             // Check for immediate connection failures
@@ -493,12 +496,15 @@ bool attemptSTAConnection(const char* ssid, const char* password) {
     
     // Wait for connection with reasonable timeout
     int connectionAttempts = 0;
-    const int maxAttempts = 30; // 15 seconds total - more generous for initial connection
+    const int maxAttempts = 20; // 10 seconds total - reduced to prevent watchdog timeout
     
     Serial.print("Connecting");
     while (WiFi.status() != WL_CONNECTED && connectionAttempts < maxAttempts) {
-        delay(500);
-        Serial.print(".");
+        delay(100);  // Shorter delay to check more frequently
+        if (connectionAttempts % 5 == 0) {
+            Serial.print(".");
+            yield(); // Feed the watchdog
+        }
         connectionAttempts++;
         
         // Check for immediate connection failures

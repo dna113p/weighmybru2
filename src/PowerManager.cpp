@@ -1,5 +1,6 @@
 #include "PowerManager.h"
 #include "Display.h"
+#include "BoardConfig.h"
 
 PowerManager::PowerManager(uint8_t sleepTouchPin, Display* display) 
     : sleepTouchPin(sleepTouchPin), displayPtr(display), sleepTouchThreshold(0),
@@ -16,10 +17,19 @@ void PowerManager::begin() {
     
     // Configure external wake-up on the touch pin
     // Wake up when pin goes HIGH (touch sensor outputs HIGH when touched)
+#if defined(BOARD_ARCH_ESP32C6)
+    // ESP32-C6 uses EXT1 wakeup (supports GPIO 0-7)
+    // Create bitmask for the sleep touch pin
+    uint64_t wakeupMask = (1ULL << sleepTouchPin);
+    esp_sleep_enable_ext1_wakeup(wakeupMask, ESP_EXT1_WAKEUP_ANY_HIGH);
+    Serial.println("Power Manager initialized. Sleep touch sensor on GPIO" + String(sleepTouchPin));
+    Serial.println("Using EXT1 wake-up (ESP32-C6) - GPIO must be 0-7 for deep sleep wake");
+#else
+    // ESP32-S3 uses EXT0 wakeup
     esp_sleep_enable_ext0_wakeup((gpio_num_t)sleepTouchPin, 1);
-    
     Serial.println("Power Manager initialized. Sleep touch sensor on GPIO" + String(sleepTouchPin));
     Serial.println("Using EXT0 wake-up (digital touch sensor) with pull-down resistor");
+#endif
     Serial.println("Device will wake up when touch sensor outputs HIGH");
 }
 

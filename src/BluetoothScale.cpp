@@ -1,3 +1,4 @@
+#include "BoardConfig.h"
 #include "BluetoothScale.h"
 #include "Display.h"
 #include <Arduino.h>
@@ -84,10 +85,11 @@ void BluetoothScale::begin(Scale* scaleInstance) {
 void BluetoothScale::end() {
     if (server) {
         stopAdvertising();
-        NimBLEDevice::deinit();
+        BLEDevice::deinit();
         server = nullptr;
         service = nullptr;
         weightCharacteristic = nullptr;
+        gaggiMateWeightCharacteristic = nullptr;
         commandCharacteristic = nullptr;
         advertising = nullptr;
     }
@@ -97,25 +99,21 @@ void BluetoothScale::initializeBLE() {
     Serial.println("BluetoothScale: Initializing BLE device...");
     Serial.printf("BluetoothScale: Free heap at start: %u bytes\n", ESP.getFreeHeap());
     
-    // Reduce BLE power consumption during initialization to prevent voltage sag
-    esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_ADV, ESP_PWR_LVL_N0);      // Moderate advertising power (0dBm)
-    esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_CONN_HDL0, ESP_PWR_LVL_N0); // Moderate connection power (0dBm)
-    
     // Initialize BLE Device with WeighMyBru name - this handles the low-level BLE stack
-    NimBLEDevice::init("WeighMyBru");
+    BLEDevice::init("WeighMyBru");
     
     // Set moderate power to reduce current draw during boot while maintaining connectivity
-    NimBLEDevice::setPower(ESP_PWR_LVL_N0);  // Moderate BLE power reduction (0dBm)
+    BLEDevice::setPower(ESP_PWR_LVL_N0);  // Moderate BLE power (0dBm)
     
     // Small delay to let power settle
     delay(100);
     
-    Serial.printf("BluetoothScale: Free heap after NimBLEDevice::init: %u bytes\n", ESP.getFreeHeap());
+    Serial.printf("BluetoothScale: Free heap after BLEDevice::init: %u bytes\n", ESP.getFreeHeap());
     
     Serial.println("BluetoothScale: Creating BLE server...");
     
     // Create BLE Server
-    server = NimBLEDevice::createServer();
+    server = BLEDevice::createServer();
     if (!server) {
         throw std::runtime_error("Failed to create BLE server");
     }
@@ -134,9 +132,9 @@ void BluetoothScale::initializeBLE() {
     // Create Weight Characteristic for GaggiMate (WeighMyBru protocol format) - Keep original UUID
     gaggiMateWeightCharacteristic = service->createCharacteristic(
         GAGGIMATE_CHARACTERISTIC_UUID,
-        NIMBLE_PROPERTY::READ |
-        NIMBLE_PROPERTY::NOTIFY |
-        NIMBLE_PROPERTY::INDICATE
+        BLECharacteristic::PROPERTY_READ |
+        BLECharacteristic::PROPERTY_NOTIFY |
+        BLECharacteristic::PROPERTY_INDICATE
     );
     
     if (!gaggiMateWeightCharacteristic) {
@@ -144,16 +142,17 @@ void BluetoothScale::initializeBLE() {
         throw std::runtime_error("Failed to create GaggiMate weight characteristic");
     }
     
-    Serial.println("BluetoothScale: GaggiMate characteristic created successfully");
+    // Add Client Characteristic Configuration Descriptor (0x2902) for notifications
+    gaggiMateWeightCharacteristic->addDescriptor(new BLE2902());
     
-    // Note: NimBLE automatically creates 0x2902 descriptors for characteristics with NOTIFY/INDICATE properties
+    Serial.println("BluetoothScale: GaggiMate characteristic created successfully");
     
     // Create Weight Characteristic for Bean Conqueror (simple float format) - New UUID
     weightCharacteristic = service->createCharacteristic(
         WEIGHT_CHARACTERISTIC_UUID,
-        NIMBLE_PROPERTY::READ |
-        NIMBLE_PROPERTY::NOTIFY |
-        NIMBLE_PROPERTY::INDICATE
+        BLECharacteristic::PROPERTY_READ |
+        BLECharacteristic::PROPERTY_NOTIFY |
+        BLECharacteristic::PROPERTY_INDICATE
     );
     
     if (!weightCharacteristic) {
@@ -161,22 +160,24 @@ void BluetoothScale::initializeBLE() {
         throw std::runtime_error("Failed to create Bean Conqueror weight characteristic");
     }
     
-    Serial.println("BluetoothScale: Bean Conqueror characteristic created successfully");
+    // Add Client Characteristic Configuration Descriptor (0x2902) for notifications
+    weightCharacteristic->addDescriptor(new BLE2902());
     
-    // Note: NimBLE automatically creates 0x2902 descriptors for characteristics with NOTIFY/INDICATE properties
+    Serial.println("BluetoothScale: Bean Conqueror characteristic created successfully");
     
     // Create Command Characteristic (for receiving commands)
     commandCharacteristic = service->createCharacteristic(
         COMMAND_CHARACTERISTIC_UUID,
-        NIMBLE_PROPERTY::WRITE |
-        NIMBLE_PROPERTY::WRITE_NR |
-        NIMBLE_PROPERTY::NOTIFY
+        BLECharacteristic::PROPERTY_WRITE |
+        BLECharacteristic::PROPERTY_WRITE_NR |
+        BLECharacteristic::PROPERTY_NOTIFY
     );
     
     if (!commandCharacteristic) {
         throw std::runtime_error("Failed to create command characteristic");
     }
     commandCharacteristic->setCallbacks(this);
+    commandCharacteristic->addDescriptor(new BLE2902());
     
     Serial.println("BluetoothScale: Starting service...");
     
@@ -186,33 +187,28 @@ void BluetoothScale::initializeBLE() {
     Serial.println("BluetoothScale: Setting up advertising...");
     
     // Get advertising object
-    advertising = NimBLEDevice::getAdvertising();
+    advertising = BLEDevice::getAdvertising();
     if (!advertising) {
         throw std::runtime_error("Failed to get advertising object");
     }
     
     advertising->addServiceUUID(SERVICE_UUID);
-    
-    // Enable scan response to allow full device name in advertising
     advertising->setScanResponse(true);
-    
-    // Explicitly set the advertising name to ensure full "WeighMyBru" appears
-    advertising->setName("WeighMyBru");
-    
-    advertising->setMinPreferred(0x0);
+    advertising->setMinPreferred(0x06);  // Functions that help with iPhone connections issue
+    advertising->setMinPreferred(0x12);
     
     Serial.println("BluetoothScale: BLE initialization completed successfully");
 }
 
 void BluetoothScale::startAdvertising() {
     if (advertising) {
-        advertising->start();
+        BLEDevice::startAdvertising();
     }
 }
 
 void BluetoothScale::stopAdvertising() {
     if (advertising) {
-        advertising->stop();
+        BLEDevice::stopAdvertising();
     }
 }
 
@@ -227,7 +223,7 @@ void BluetoothScale::update() {
     // Handle connection state changes
     if (!deviceConnected && oldDeviceConnected) {
         delay(500); // Give the bluetooth stack time to get ready
-        server->startAdvertising();
+        BLEDevice::startAdvertising();
         Serial.println("BluetoothScale: Start advertising after disconnect");
         oldDeviceConnected = deviceConnected;
     }
@@ -497,25 +493,24 @@ void BluetoothScale::processIncomingMessage(uint8_t* data, size_t length) {
 }
 
 // BLE Server Callbacks
-void BluetoothScale::onConnect(NimBLEServer* pServer) {
+void BluetoothScale::onConnect(BLEServer* pServer) {
     deviceConnected = true;
-    NimBLEDevice::stopAdvertising();
+    BLEDevice::stopAdvertising();
     Serial.println("BluetoothScale: Device connected");
 }
 
-void BluetoothScale::onDisconnect(NimBLEServer* pServer) {
+void BluetoothScale::onDisconnect(BLEServer* pServer) {
     deviceConnected = false;
     Serial.println("BluetoothScale: Device disconnected");
 }
 
 // BLE Characteristic Callbacks
-void BluetoothScale::onWrite(NimBLECharacteristic* pCharacteristic) {
-    std::string value = pCharacteristic->getValue();
+void BluetoothScale::onWrite(BLECharacteristic* pCharacteristic) {
+    // Get raw data pointer and length - works with both String and std::string
+    uint8_t* data = pCharacteristic->getData();
+    size_t length = pCharacteristic->getLength();
     
-    if (value.length() > 0) {
-        uint8_t* data = (uint8_t*)value.data();
-        size_t length = value.length();
-        
+    if (length > 0) {
         Serial.printf("BluetoothScale: Received %d bytes\n", length);
         processIncomingMessage(data, length);
     }
