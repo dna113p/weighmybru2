@@ -192,10 +192,16 @@ void BluetoothScale::initializeBLE() {
         throw std::runtime_error("Failed to get advertising object");
     }
     
+    // Add service UUID to advertising data
     advertising->addServiceUUID(SERVICE_UUID);
+    
+    // Enable scan response to include device name
     advertising->setScanResponse(true);
-    advertising->setMinPreferred(0x06);  // Functions that help with iPhone connections issue
-    advertising->setMinPreferred(0x12);
+    
+    // Set connection interval preferences (in units of 1.25ms)
+    // 0x06 = 7.5ms min, 0x12 = 22.5ms max
+    advertising->setMinPreferred(0x06);
+    advertising->setMaxPreferred(0x12);
     
     Serial.println("BluetoothScale: BLE initialization completed successfully");
 }

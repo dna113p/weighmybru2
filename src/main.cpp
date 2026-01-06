@@ -36,6 +36,16 @@ BatteryMonitor batteryMonitor(batteryPin);
 void setup() {
   Serial.begin(115200);
   
+#ifdef BOARD_ARCH_ESP32C6
+  // ESP32-C6 USB-CDC needs extra time to enumerate
+  for (int i = 0; i < 50; i++) {
+    Serial.println("*** BOOT START ***");
+    Serial.flush();
+    delay(100);
+    if (Serial) break;
+  }
+#endif
+  
   // Version and board identification
   Serial.println("=================================");
   Serial.printf("WeighMyBru² v%s\n", WEIGHMYBRU_VERSION_STRING);
@@ -57,13 +67,17 @@ void setup() {
   }
   
   // CRITICAL: Initialize BLE FIRST before WiFi to prevent radio conflicts
+  Serial.println("=== STARTING BLE INITIALIZATION ===");
   Serial.println("Initializing BLE FIRST for GaggiMate compatibility...");
   Serial.printf("Free heap before BLE init: %u bytes\n", ESP.getFreeHeap());
 #if HAS_PSRAM
   Serial.printf("Free PSRAM before BLE init: %u bytes\n", ESP.getFreePsram());
 #endif
+  Serial.flush();  // Ensure message is output
   
   try {
+    Serial.println("Calling bluetoothScale.begin()...");
+    Serial.flush();
     bluetoothScale.begin();  // Initialize BLE without scale reference
     Serial.println("BLE initialized successfully - GaggiMate should be able to connect");
     Serial.printf("Free heap after BLE init: %u bytes\n", ESP.getFreeHeap());
@@ -74,6 +88,8 @@ void setup() {
     Serial.println("BLE initialization failed - continuing without Bluetooth");
     Serial.printf("Free heap after BLE fail: %u bytes\n", ESP.getFreeHeap());
   }
+  Serial.println("=== BLE INITIALIZATION COMPLETE ===");
+  Serial.flush();
   
   // Initialize display with error handling - don't block if display fails
   Serial.println("Initializing display...");
