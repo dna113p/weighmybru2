@@ -16,11 +16,19 @@ void PowerManager::begin() {
     
     // Configure external wake-up on the touch pin
     // Wake up when pin goes HIGH (touch sensor outputs HIGH when touched)
-    esp_sleep_enable_ext0_wakeup((gpio_num_t)sleepTouchPin, 1);
-    
-    Serial.println("Power Manager initialized. Sleep touch sensor on GPIO" + String(sleepTouchPin));
-    Serial.println("Using EXT0 wake-up (digital touch sensor) with pull-down resistor");
-    Serial.println("Device will wake up when touch sensor outputs HIGH");
+    #ifdef BOARD_XIAO_C6
+        // ESP32-C6 uses GPIO wake-up instead of EXT0
+        esp_deep_sleep_enable_gpio_wakeup(1ULL << sleepTouchPin, ESP_GPIO_WAKEUP_GPIO_HIGH);
+        Serial.println("Power Manager initialized. Sleep touch sensor on GPIO" + String(sleepTouchPin));
+        Serial.println("Using GPIO wake-up (digital touch sensor) with pull-down resistor");
+        Serial.println("Device will wake up when touch sensor outputs HIGH");
+    #else
+        // ESP32-S3 uses EXT0 wake-up
+        esp_sleep_enable_ext0_wakeup((gpio_num_t)sleepTouchPin, 1);
+        Serial.println("Power Manager initialized. Sleep touch sensor on GPIO" + String(sleepTouchPin));
+        Serial.println("Using EXT0 wake-up (digital touch sensor) with pull-down resistor");
+        Serial.println("Device will wake up when touch sensor outputs HIGH");
+    #endif
 }
 
 void PowerManager::update() {
@@ -111,7 +119,11 @@ void PowerManager::enterDeepSleep() {
     }
     
     // Print wake-up configuration for debugging
-    Serial.println("Wake-up configured for EXT0 on GPIO" + String(sleepTouchPin));
+    #ifdef BOARD_XIAO_C6
+        Serial.println("Wake-up configured for GPIO wake on GPIO" + String(sleepTouchPin));
+    #else
+        Serial.println("Wake-up configured for EXT0 on GPIO" + String(sleepTouchPin));
+    #endif
     Serial.println("Will wake when pin goes HIGH");
     
     // Flush serial output

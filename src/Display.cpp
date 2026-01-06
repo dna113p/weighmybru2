@@ -11,15 +11,37 @@ Display::Display(uint8_t sdaPin, uint8_t sclPin, Scale* scale, FlowRate* flowRat
     : sdaPin(sdaPin), sclPin(sclPin), scalePtr(scale), flowRatePtr(flowRate), bluetoothPtr(nullptr), powerManagerPtr(nullptr), batteryPtr(nullptr), wifiManagerPtr(nullptr),
       messageStartTime(0), messageDuration(2000), showingMessage(false), 
       timerStartTime(0), timerPausedTime(0), timerRunning(false), timerPaused(false),
-      lastFlowRate(0.0), showingStatusPage(false), statusPageStartTime(0) {
-    display = new Adafruit_SSD1306(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+      lastFlowRate(0.0), showingStatusPage(false), statusPageStartTime(0),
+      display(nullptr), displayConnected(false) {
+    try {
+        display = new Adafruit_SSD1306(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+    } catch (...) {
+        display = nullptr;
+        displayConnected = false;
+    }
+}
+
+Display::~Display() {
+    // Clean up display pointer if it exists
+    if (display != nullptr) {
+        delete display;
+        display = nullptr;
+    }
 }
 
 bool Display::begin() {
     Serial.println("Initializing display...");
     
+    // Check if display pointer is valid
+    if (display == nullptr) {
+        Serial.println("ERROR: Display pointer is null - display hardware not available");
+        displayConnected = false;
+        return false;
+    }
+    
     // Initialize I2C with custom pins
     Wire.begin(sdaPin, sclPin);
+    delay(100); // Give I2C time to stabilize
     
     // Test I2C connection first with timeout
     Serial.println("Testing I2C connection to display...");
@@ -103,8 +125,8 @@ bool Display::begin() {
 }
 
 void Display::setupDisplay() {
-    // Return early if display is not connected
-    if (!displayConnected) {
+    // Return early if display is not connected or pointer is null
+    if (!displayConnected || display == nullptr) {
         return;
     }
     
@@ -114,8 +136,8 @@ void Display::setupDisplay() {
 }
 
 void Display::update() {
-    // Return early if display is not connected
-    if (!displayConnected) {
+    // Return early if display is not connected or pointer is null
+    if (!displayConnected || display == nullptr) {
         return;
     }
     
@@ -151,8 +173,8 @@ void Display::update() {
 }
 
 void Display::showWeight(float weight) {
-    // Return early if display is not connected
-    if (!displayConnected) {
+    // Return early if display is not connected or pointer is null
+    if (!displayConnected || display == nullptr) {
         return;
     }
 
@@ -163,8 +185,8 @@ void Display::showWeight(float weight) {
 }
 
 void Display::showMessage(const String& message, int duration) {
-    // Return early if display is not connected
-    if (!displayConnected) {
+    // Return early if display is not connected or pointer is null
+    if (!displayConnected || display == nullptr) {
         return;
     }
     
@@ -198,8 +220,8 @@ void Display::showMessage(const String& message, int duration) {
 }
 
 void Display::showSleepCountdown(int seconds) {
-    // Return early if display is not connected
-    if (!displayConnected) {
+    // Return early if display is not connected or pointer is null
+    if (!displayConnected || display == nullptr) {
         return;
     }
     
@@ -243,8 +265,8 @@ void Display::showSleepCountdown(int seconds) {
 }
 
 void Display::showSleepMessage() {
-    // Return early if display is not connected
-    if (!displayConnected) {
+    // Return early if display is not connected or pointer is null
+    if (!displayConnected || display == nullptr) {
         return;
     }
     
@@ -285,8 +307,8 @@ void Display::showSleepMessage() {
 }
 
 void Display::showGoingToSleepMessage() {
-    // Return early if display is not connected
-    if (!displayConnected) {
+    // Return early if display is not connected or pointer is null
+    if (!displayConnected || display == nullptr) {
         return;
     }
     
@@ -331,8 +353,8 @@ void Display::showGoingToSleepMessage() {
 }
 
 void Display::showSleepCancelledMessage() {
-    // Return early if display is not connected
-    if (!displayConnected) {
+    // Return early if display is not connected or pointer is null
+    if (!displayConnected || display == nullptr) {
         return;
     }
     
@@ -377,8 +399,8 @@ void Display::showSleepCancelledMessage() {
 }
 
 void Display::showTaringMessage() {
-    // Return early if display is not connected
-    if (!displayConnected) {
+    // Return early if display is not connected or pointer is null
+    if (!displayConnected || display == nullptr) {
         return;
     }
     
@@ -424,8 +446,8 @@ void Display::showTaringMessage() {
 }
 
 void Display::showTaredMessage() {
-    // Return early if display is not connected
-    if (!displayConnected) {
+    // Return early if display is not connected or pointer is null
+    if (!displayConnected || display == nullptr) {
         return;
     }
     
@@ -470,8 +492,8 @@ void Display::showTaredMessage() {
 }
 
 void Display::showWiFiStatusMessage(bool isEnabled) {
-    // Return early if display is not connected
-    if (!displayConnected) {
+    // Return early if display is not connected or pointer is null
+    if (!displayConnected || display == nullptr) {
         return;
     }
     
@@ -527,8 +549,8 @@ void Display::clearMessageState() {
 }
 
 void Display::showIPAddresses() {
-    // Return early if display is not connected
-    if (!displayConnected) {
+    // Return early if display is not connected or pointer is null
+    if (!displayConnected || display == nullptr) {
         return;
     }
     
@@ -569,8 +591,8 @@ void Display::showIPAddresses() {
 }
 
 void Display::clear() {
-    // Return early if display is not connected
-    if (!displayConnected) {
+    // Return early if display is not connected or pointer is null
+    if (!displayConnected || display == nullptr) {
         return;
     }
     
@@ -579,8 +601,8 @@ void Display::clear() {
 }
 
 void Display::setBrightness(uint8_t brightness) {
-    // Return early if display is not connected
-    if (!displayConnected) {
+    // Return early if display is not connected or pointer is null
+    if (!displayConnected || display == nullptr) {
         return;
     }
     
@@ -606,8 +628,8 @@ void Display::setWiFiManager(WiFiManager* wifi) {
 }
 
 void Display::drawBluetoothStatus() {
-    // Return early if display is not connected
-    if (!displayConnected) {
+    // Return early if display is not connected or pointer is null
+    if (!displayConnected || display == nullptr) {
         return;
     }
     
@@ -617,16 +639,18 @@ void Display::drawBluetoothStatus() {
         display->setCursor(115, 0); // Position at top right
         display->print("BT");
         
+#ifndef DISABLE_BLUETOOTH
         // If connected, draw rectangle around "BT"
         if (bluetoothPtr->isConnected()) {
             display->drawRect(113, -1, 16, 10, SSD1306_WHITE); // Rectangle around "BT"
         }
+#endif
     }
 }
 
 void Display::drawBatteryStatus() {
-    // Return early if display is not connected or no battery monitor
-    if (!displayConnected || !batteryPtr) {
+    // Return early if display is not connected, pointer is null, or no battery monitor
+    if (!displayConnected || display == nullptr || !batteryPtr) {
         return;
     }
     
@@ -661,8 +685,8 @@ void Display::drawBatteryStatus() {
 }
 
 void Display::drawWeight(float weight) {
-    // Return early if display is not connected
-    if (!displayConnected) {
+    // Return early if display is not connected or pointer is null
+    if (!displayConnected || display == nullptr) {
         return;
     }
     
@@ -738,8 +762,8 @@ Function removed as part of mode simplification - unified into showWeightWithFlo
 */
 
 void Display::showWeightWithFlowAndTimer(float weight) {
-    // Return early if display is not connected
-    if (!displayConnected) {
+    // Return early if display is not connected or pointer is null
+    if (!displayConnected || display == nullptr) {
         return;
     }
     
@@ -988,13 +1012,19 @@ float Display::getTimerSeconds() const {
 }
 
 void Display::showStatusPage() {
-    // Return early if display is not connected
-    if (!displayConnected) {
+    // Return early if display is not connected or pointer is null
+    if (!displayConnected || display == nullptr) {
         return;
     }
 
     display->clearDisplay();
     display->setTextColor(SSD1306_WHITE);
+    
+    // Check WiFi power state first
+    bool wifiEnabled = false;
+    if (wifiManagerPtr != nullptr) {
+        wifiEnabled = wifiManagerPtr->isWiFiEnabled();
+    }
     
     // Top line: Battery %, Scale icon, BLE icon
     display->setTextSize(1);
@@ -1022,16 +1052,18 @@ void Display::showStatusPage() {
     // Bluetooth status (right) - BT text with rectangle border when connected
     display->setCursor(110, 0);
     display->print("BT");
+#ifndef DISABLE_BLUETOOTH
     if (bluetoothPtr != nullptr && bluetoothPtr->isConnected()) {
         // Draw rectangle around "BT" when connected (with proper spacing)
         display->drawRect(108, -1, 16, 10, SSD1306_WHITE); // Rectangle around "BT"
     }
+#endif
     
     // Bottom line: WiFi mode and IP address (moved to very bottom)
     display->setTextSize(1);
     
     // Check WiFi power state first
-    if (!isWiFiEnabled()) {
+    if (!wifiEnabled) {
         display->setCursor(0, 24);  // Bottom of 32-pixel display
         display->print("WiFi: OFF");
     } else if (WiFi.status() == WL_CONNECTED) {

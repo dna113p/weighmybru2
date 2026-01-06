@@ -108,7 +108,19 @@ AsyncWebServer server(80);
  * Response: {"weight":45.23,"flowrate":2.15}
  */
 
+#ifndef DISABLE_BLUETOOTH
 void setupWebServer(Scale &scale, FlowRate &flowRate, BluetoothScale &bluetoothScale, Display &display, BatteryMonitor &battery) {
+#else
+void setupWebServer(Scale &scale, FlowRate &flowRate, Display &display, BatteryMonitor &battery) {
+  // Dummy BluetoothScale for code compatibility
+  class DummyBluetooth {
+  public:
+    bool isConnected() const { return false; }
+    int getBluetoothSignalStrength() const { return -100; }
+    String getBluetoothConnectionInfo() const { return "{\"connected\":false,\"enabled\":false}"; }
+  };
+  static DummyBluetooth bluetoothScale;
+#endif
   if (!LittleFS.begin()) {
     Serial.println();
     Serial.println("=====================================");

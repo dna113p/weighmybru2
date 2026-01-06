@@ -1,5 +1,7 @@
 #pragma once
 
+#ifndef DISABLE_BLUETOOTH
+
 #include <NimBLEDevice.h>
 #include <NimBLEServer.h>
 #include <NimBLEUtils.h>
@@ -38,11 +40,11 @@ public:
     String getBluetoothConnectionInfo(); // Get detailed BLE connection information
     
     // BLE Server callbacks
-    void onConnect(NimBLEServer* pServer) override;
-    void onDisconnect(NimBLEServer* pServer) override;
+    void onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo) override;
+    void onDisconnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo, int reason) override;
     
     // BLE Characteristic callbacks
-    void onWrite(NimBLECharacteristic* pCharacteristic) override;
+    void onWrite(NimBLECharacteristic* pCharacteristic, NimBLEConnInfo& connInfo) override;
 
 private:
     Scale* scale;
@@ -86,3 +88,5 @@ private:
     void sendBeanConquerorWeight(float weight);    // Send simple float format
     void sendGaggiMateWeight(float weight);        // Send WeighMyBru protocol format
 };
+
+#endif // DISABLE_BLUETOOTH

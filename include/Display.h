@@ -14,6 +14,7 @@ class BatteryMonitor; // Forward declaration
 class Display {
 public:
     Display(uint8_t sdaPin, uint8_t sclPin, Scale* scale, FlowRate* flowRate);
+    ~Display(); // Destructor for cleanup
     bool begin();
     bool isConnected() const { return displayConnected; } // Check if display is available
     void update();
@@ -63,7 +64,7 @@ private:
     BatteryMonitor* batteryPtr;
     class WiFiManager* wifiManagerPtr;
     Adafruit_SSD1306* display;
-    bool displayConnected; // Track if display is actually connected
+    bool displayConnected = false; // Track if display is actually connected - initialize to false
     
     static const uint8_t SCREEN_WIDTH = 128;
     static const uint8_t SCREEN_HEIGHT = 32;

@@ -13,6 +13,12 @@ void BatteryMonitor::begin() {
     analogReadResolution(12);  // Use 12-bit resolution (0-4095)
     analogSetAttenuation(ADC_11db);  // 0-3.3V range for better accuracy
     
+    // Configure VBUS detection pin for ESP32-C6
+    #ifdef VBUS_PIN
+        pinMode(VBUS_PIN, INPUT);
+        Serial.printf("VBUS detection enabled on GPIO%d\n", VBUS_PIN);
+    #endif
+    
     // Load calibration from preferences
     preferences.begin("battery", false);
     loadCalibration();
@@ -119,9 +125,14 @@ String BatteryMonitor::getBatteryStatus() {
 }
 
 bool BatteryMonitor::isCharging() {
-    // Future implementation: detect if voltage is increasing over time
-    // For now, return false (would need additional circuitry to detect charging)
-    return false;
+    // Check VBUS pin for USB power detection (ESP32-C6)
+    #ifdef VBUS_PIN
+        return digitalRead(VBUS_PIN) == HIGH;
+    #else
+        // Future implementation: detect if voltage is increasing over time
+        // For now, return false (would need additional circuitry to detect charging)
+        return false;
+    #endif
 }
 
 bool BatteryMonitor::isLowBattery() {

@@ -8,7 +8,9 @@
 #include "WiFiManager.h"
 #include "FlowRate.h"
 #include "Calibration.h"
+#ifndef DISABLE_BLUETOOTH
 #include "BluetoothScale.h"
+#endif
 #include "TouchSensor.h"
 #include "Display.h"
 #include "PowerManager.h"
@@ -27,7 +29,9 @@ uint8_t sclPin = I2C_SCL_PIN;         // I2C Clock pin for display
 float calibrationFactor = 4195.712891;
 Scale scale(dataPin, clockPin, calibrationFactor);
 FlowRate flowRate;
+#ifndef DISABLE_BLUETOOTH
 BluetoothScale bluetoothScale;
+#endif
 TouchSensor touchSensor(touchPin, &scale);
 Display oledDisplay(sdaPin, sclPin, &scale, &flowRate);
 PowerManager powerManager(sleepTouchPin, &oledDisplay);
@@ -56,20 +60,29 @@ void setup() {
     delay(1000);
   }
   
+#ifndef DISABLE_BLUETOOTH
   // CRITICAL: Initialize BLE FIRST before WiFi to prevent radio conflicts
   Serial.println("Initializing BLE FIRST for GaggiMate compatibility...");
   Serial.printf("Free heap before BLE init: %u bytes\n", ESP.getFreeHeap());
+  #ifdef BOARD_HAS_PSRAM
   Serial.printf("Free PSRAM before BLE init: %u bytes\n", ESP.getFreePsram());
+  #endif
   
   try {
     bluetoothScale.begin();  // Initialize BLE without scale reference
     Serial.println("BLE initialized successfully - GaggiMate should be able to connect");
     Serial.printf("Free heap after BLE init: %u bytes\n", ESP.getFreeHeap());
+    #ifdef BOARD_HAS_PSRAM
     Serial.printf("Free PSRAM after BLE init: %u bytes\n", ESP.getFreePsram());
+    #endif
   } catch (...) {
     Serial.println("BLE initialization failed - continuing without Bluetooth");
     Serial.printf("Free heap after BLE fail: %u bytes\n", ESP.getFreeHeap());
   }
+#else
+  Serial.println("Bluetooth DISABLED in this build (ESP32-C6 framework limitation)");
+  Serial.println("WiFi web interface and all other features available");
+#endif
   
   // Initialize display with error handling - don't block if display fails
   Serial.println("Initializing display...");
@@ -127,13 +140,16 @@ void setup() {
     Serial.println("Check HX711 wiring and connections.");
   } else {
     Serial.println("Scale initialized successfully");
+#ifndef DISABLE_BLUETOOTH
     // Now that scale is ready, set the reference in BluetoothScale
     bluetoothScale.setScale(&scale);
+#endif
   }
   
   // BLE was initialized earlier - no need to initialize again
   // bluetoothScale.begin(&scale);
   
+#ifndef DISABLE_BLUETOOTH
   // Set bluetooth reference in display for status indicator (if display available)
   if (oledDisplay.isConnected()) {
     oledDisplay.setBluetoothScale(&bluetoothScale);
@@ -141,6 +157,7 @@ void setup() {
   
   // Set display reference in bluetooth for timer control
   bluetoothScale.setDisplay(&oledDisplay);
+#endif
   
   // Set power manager reference in display for timer state synchronization (if display available)
   if (oledDisplay.isConnected()) {
@@ -175,7 +192,11 @@ void setup() {
   // Link flow rate to touch sensor for averaging reset on tare
   touchSensor.setFlowRate(&flowRate);
 
+#ifndef DISABLE_BLUETOOTH
   setupWebServer(scale, flowRate, bluetoothScale, oledDisplay, batteryMonitor);
+#else
+  setupWebServer(scale, flowRate, oledDisplay, batteryMonitor);
+#endif
 }
 
 void loop() {
@@ -200,11 +221,13 @@ void loop() {
   // Maintain WiFi AP stability
   maintainWiFi();
   
+#ifndef DISABLE_BLUETOOTH
   // Update Bluetooth less frequently to reduce BLE interference
   if (millis() - lastBLEUpdate >= 50) { // Update every 50ms (20Hz) - sufficient for app responsiveness
     bluetoothScale.update();
     lastBLEUpdate = millis();
   }
+#endif
   
   // Update touch sensor
   touchSensor.update();
