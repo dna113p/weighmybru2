@@ -15,6 +15,7 @@ Display::Display(uint8_t sdaPin, uint8_t sclPin, Scale* scale, FlowRate* flowRat
       lastFlowRate(0.0), lastDisplayRefresh(0), lastDisplayedWeight(0.0f), lastDisplayedFlowRate(0.0f),
       lastDisplayedTimerTenths(-1), lastDisplayedBatteryPercentage(-1), lastDisplayedBluetoothConnected(false),
       lastDisplayedWiFiEnabled(true), lastDisplayedWiFiConnected(false), lastDisplayedStatusPage(false),
+      zeroWeightLatched(false),
       showingStatusPage(false), statusPageStartTime(0) {
     display = new Adafruit_SSD1306(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 }
@@ -162,6 +163,7 @@ void Display::update() {
     // Show normal weight display when not showing message or status page
     else if (scalePtr != nullptr) {
         float weight = scalePtr->getCurrentWeight();
+        float displayWeight = normalizeDisplayedWeight(weight);
         float flowRate = flowRatePtr ? flowRatePtr->getFlowRate() : 0.0f;
         int timerTenths = (int)(getTimerSeconds() * 10.0f + 0.5f);
         int batteryPercentage = batteryPtr ? batteryPtr->getBatteryPercentage() : -1;
@@ -169,11 +171,11 @@ void Display::update() {
         bool wifiEnabled = isWiFiEnabled();
         bool wifiConnected = (WiFi.status() == WL_CONNECTED);
         
-        bool activeDisplay = timerRunning || fabsf(flowRate) >= 0.1f || fabsf(weight - lastDisplayedWeight) >= 0.3f;
+        bool activeDisplay = timerRunning || fabsf(flowRate) >= 0.1f || fabsf(displayWeight - lastDisplayedWeight) >= 0.3f;
         unsigned long refreshInterval = activeDisplay ? ACTIVE_REFRESH_INTERVAL : IDLE_REFRESH_INTERVAL;
         bool contentChanged =
             !lastDisplayedStatusPage ||
-            fabsf(weight - lastDisplayedWeight) >= 0.1f ||
+            fabsf(displayWeight - lastDisplayedWeight) >= 0.1f ||
             fabsf(flowRate - lastDisplayedFlowRate) >= 0.1f ||
             timerTenths != lastDisplayedTimerTenths ||
             batteryPercentage != lastDisplayedBatteryPercentage ||
@@ -187,14 +189,14 @@ void Display::update() {
         
         lastDisplayedStatusPage = false;
         lastDisplayRefresh = now;
-        lastDisplayedWeight = weight;
+        lastDisplayedWeight = displayWeight;
         lastDisplayedFlowRate = flowRate;
         lastDisplayedTimerTenths = timerTenths;
         lastDisplayedBatteryPercentage = batteryPercentage;
         lastDisplayedBluetoothConnected = bluetoothConnected;
         lastDisplayedWiFiEnabled = wifiEnabled;
         lastDisplayedWiFiConnected = wifiConnected;
-        showWeightWithFlowAndTimer(weight);
+        showWeightWithFlowAndTimer(displayWeight);
     }
 }
 
@@ -716,12 +718,7 @@ void Display::drawWeight(float weight) {
     
     display->clearDisplay();
     
-    // Apply deadband to prevent flickering between 0.0g and -0.0g
-    // Show 0.0g (without negative sign) when weight is between -0.1g and +0.1g
-    float displayWeight = weight;
-    if (weight >= -0.1 && weight <= 0.1) {
-        displayWeight = 0.0; // Force to exactly 0.0 to avoid negative sign
-    }
+    float displayWeight = normalizeDisplayedWeight(weight);
     
     // Format weight string with consistent spacing (without "g" unit)
     String weightStr;
@@ -802,11 +799,7 @@ void Display::showWeightWithFlowAndTimer(float weight) {
     
     display->clearDisplay();
     
-    // Apply deadband to prevent flickering between 0.0g and -0.0g
-    float displayWeight = weight;
-    if (weight >= -0.1 && weight <= 0.1) {
-        displayWeight = 0.0;
-    }
+    float displayWeight = normalizeDisplayedWeight(weight);
     
     // Split weight into integer and decimal parts for custom rendering
     bool isNegative = displayWeight < 0;
@@ -825,17 +818,20 @@ void Display::showWeightWithFlowAndTimer(float weight) {
     int weightY = 5; // Middle of 32-pixel screen (size 3 text is ~21px tall, so (32-21)/2 ≈ 5)
     display->setCursor(0, weightY);
     
-    // Draw negative sign if needed
-    int currentX = 0;
+    // Reserve a much smaller sign slot so negative values remain readable
+    // without the minus taking over the left side of the display.
+    display->setTextSize(1);
+    display->getTextBounds("-", 0, 0, &x1, &y1, &w, &h);
+    int signWidth = w + 1;
+    int currentX = signWidth;
     if (isNegative) {
+        display->setCursor(0, weightY + 11);
         display->print("-");
-        // Calculate width of "-" in size 3
-        display->getTextBounds("-", 0, 0, &x1, &y1, &w, &h);
-        currentX += w;
     }
-    
+
     // Draw integer part in size 3
     String intStr = String(integerPart);
+    display->setTextSize(3);
     display->setCursor(currentX, weightY);
     display->print(intStr);
     
@@ -972,6 +968,25 @@ void Display::showWeightWithFlowAndTimer(float weight) {
     display->display();
 }
 
+float Display::normalizeDisplayedWeight(float weight) {
+    float absWeight = fabsf(weight);
+
+    if (zeroWeightLatched) {
+        if (absWeight <= ZERO_DISPLAY_EXIT_THRESHOLD) {
+            return 0.0f;
+        }
+        zeroWeightLatched = false;
+        return weight;
+    }
+
+    if (absWeight <= ZERO_DISPLAY_ENTER_THRESHOLD) {
+        zeroWeightLatched = true;
+        return 0.0f;
+    }
+
+    return weight;
+}
+
 // Timer management methods
 void Display::startTimer() {
     if (!timerRunning) {
@@ -979,6 +994,9 @@ void Display::startTimer() {
         timerStartTime = millis();
         timerRunning = true;
         timerPaused = false;
+        if (powerManagerPtr != nullptr) {
+            powerManagerPtr->setTimerRunningState();
+        }
         
         // Start flow rate averaging when timer starts
         if (flowRatePtr != nullptr) {
@@ -988,6 +1006,9 @@ void Display::startTimer() {
         // Resume from paused state
         timerStartTime = millis() - timerPausedTime;
         timerPaused = false;
+        if (powerManagerPtr != nullptr) {
+            powerManagerPtr->setTimerRunningState();
+        }
         
         // Resume flow rate averaging when timer resumes
         if (flowRatePtr != nullptr) {
@@ -1001,6 +1022,9 @@ void Display::stopTimer() {
     if (timerRunning && !timerPaused) {
         timerPausedTime = millis() - timerStartTime;
         timerPaused = true;
+        if (powerManagerPtr != nullptr) {
+            powerManagerPtr->setTimerPausedState();
+        }
         
         // Stop flow rate averaging when timer stops
         if (flowRatePtr != nullptr) {
@@ -1014,6 +1038,9 @@ void Display::resetTimer() {
     timerPausedTime = 0;
     timerRunning = false;
     timerPaused = false;
+    if (powerManagerPtr != nullptr) {
+        powerManagerPtr->resetTimerState();
+    }
     
     // Reset flow rate averaging when timer is reset
     if (flowRatePtr != nullptr) {

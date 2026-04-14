@@ -440,7 +440,12 @@ uint8_t BluetoothScale::calculateChecksum(const uint8_t* data, size_t length) {
 void BluetoothScale::handleTareCommand() {
     if (scale) {
         Serial.println("BluetoothScale: Executing tare command");
-        scale->tare();
+        if (!scale->tareFromStoredStable()) {
+            scale->tare();
+        }
+        if (display) {
+            display->resetTimer();
+        }
         
         // Send tare confirmation
         uint8_t payload[] = {0x03, 0x0a, 0x01, 0x00, 0x00};

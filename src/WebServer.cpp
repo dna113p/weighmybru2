@@ -249,7 +249,8 @@ void setupWebServer(Scale &scale, FlowRate &flowRate, BluetoothScale &bluetoothS
         json += "\"message\":\"Battery calibrated to " + String(actualVoltage, 3) + "V\",";
         json += "\"new_voltage\":" + String(battery.getBatteryVoltage(), 3) + ",";
         json += "\"new_percentage\":" + String(battery.getBatteryPercentage()) + ",";
-        json += "\"calibration_offset\":" + String(battery.getCalibrationOffset(), 3);
+        json += "\"calibration_offset\":" + String(battery.getCalibrationOffset(), 3) + ",";
+        json += "\"calibration_scale\":" + String(battery.getCalibrationScale(), 4);
         json += "}";
         request->send(200, "application/json", json);
       } else {
@@ -282,7 +283,8 @@ void setupWebServer(Scale &scale, FlowRate &flowRate, BluetoothScale &bluetoothS
         json += "\"after_voltage\":" + String(afterVoltage, 3) + ",";
         json += "\"after_percentage\":" + String(afterPercentage) + ",";
         json += "\"target_voltage\":" + String(actualVoltage, 3) + ",";
-        json += "\"calibration_offset\":" + String(battery.getCalibrationOffset(), 3);
+        json += "\"calibration_offset\":" + String(battery.getCalibrationOffset(), 3) + ",";
+        json += "\"calibration_scale\":" + String(battery.getCalibrationScale(), 4);
         json += "}";
         request->send(200, "application/json", json);
         Serial.printf("Battery calibrated via GET: %.3fV (was %.3fV, now %.3fV)\n", actualVoltage, beforeVoltage, afterVoltage);
@@ -305,39 +307,34 @@ void setupWebServer(Scale &scale, FlowRate &flowRate, BluetoothScale &bluetoothS
     json += ",\"critical_battery\":" + String(battery.isCriticalBattery() ? "true" : "false");
     json += ",\"charging\":" + String(battery.isCharging() ? "true" : "false");
     json += ",\"calibration_offset\":" + String(battery.getCalibrationOffset(), 3);
+    json += ",\"calibration_scale\":" + String(battery.getCalibrationScale(), 4);
     json += "}";
     request->send(200, "application/json", json);
   });
 
   // Battery debug endpoint for troubleshooting
   server.on("/api/battery/debug", HTTP_GET, [&battery](AsyncWebServerRequest *request) {
-    // We need to expose the raw ADC reading for debugging
-    // Let's create a temporary battery instance to get raw data
-    int rawADC = analogRead(7); // GPIO7 battery pin
-    float rawVoltage = ((float)rawADC / 4095.0f) * 3.3f;
-    float dividedVoltage = rawVoltage * 2.0f; // Apply voltage divider ratio
+    int rawADC = battery.getRawAdcReading();
+    float pinVoltage = battery.getPinVoltage();
     
     String json = "{";
     json += "\"raw_adc\":" + String(rawADC) + ",";
-    json += "\"raw_voltage\":" + String(rawVoltage, 3) + ",";
-    json += "\"divided_voltage\":" + String(dividedVoltage, 3) + ",";
+    json += "\"pin_voltage\":" + String(pinVoltage, 3) + ",";
     json += "\"calibrated_voltage\":" + String(battery.getBatteryVoltage(), 3) + ",";
     json += "\"calibration_offset\":" + String(battery.getCalibrationOffset(), 3) + ",";
+    json += "\"calibration_scale\":" + String(battery.getCalibrationScale(), 4) + ",";
     json += "\"percentage\":" + String(battery.getBatteryPercentage());
     json += "}";
     request->send(200, "application/json", json);
   });
 
-  server.on("/api/tare", HTTP_POST, [&scale, &display, &flowRate](AsyncWebServerRequest *request){
+  server.on("/api/tare", HTTP_POST, [&scale, &display](AsyncWebServerRequest *request){
     scale.tare();
     
-    // Reset timer when taring (prepare for fresh brew)
+    // Reset timer to zero and leave it stopped for the next brew
     display.resetTimer();
     
-    // Reset flow rate averaging for fresh brew measurement
-    flowRate.resetTimerAveraging();
-    
-    request->send(200, "text/plain", "Scale tared! Timer and flow rate reset for fresh brew.");
+    request->send(200, "text/plain", "Scale tared! Timer reset for a fresh brew.");
   });
 
   server.on("/api/set-calibrationfactor", HTTP_POST, [&scale](AsyncWebServerRequest *request){

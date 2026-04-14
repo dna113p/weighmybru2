@@ -126,16 +126,10 @@ void TouchSensor::handleTouch() {
         scalePtr->tare();
         Serial.println("Scale tared successfully");
         
-        // Reset timer when manual tare is pressed
+        // Reset timer to zero and leave it stopped for the next brew
         if (displayPtr != nullptr) {
             displayPtr->resetTimer();
             Serial.println("Timer reset with manual tare");
-        }
-        
-        // Reset flow rate averaging for fresh brew
-        if (flowRatePtr != nullptr) {
-            flowRatePtr->resetTimerAveraging();
-            Serial.println("Flow rate averaging reset for fresh brew");
         }
         
         // Show completion message on display if available
@@ -173,16 +167,10 @@ void TouchSensor::checkDelayedTare() {
             }
             Serial.println("Scale tared successfully");
             
-            // Reset timer when manual tare is pressed
+            // Reset timer to zero and leave it stopped for the next brew
             if (displayPtr != nullptr) {
                 displayPtr->resetTimer();
                 Serial.println("Timer reset with manual tare");
-            }
-            
-            // Reset flow rate averaging for fresh brew
-            if (flowRatePtr != nullptr) {
-                flowRatePtr->resetTimerAveraging();
-                Serial.println("Flow rate averaging reset for fresh brew");
             }
             
             // Show completion message on display if available

@@ -212,3 +212,13 @@ void PowerManager::resetTimerState() {
     timerState = TimerState::STOPPED;
     Serial.println("PowerManager timer state reset");
 }
+
+void PowerManager::setTimerRunningState() {
+    timerState = TimerState::RUNNING;
+    Serial.println("PowerManager timer state set to running");
+}
+
+void PowerManager::setTimerPausedState() {
+    timerState = TimerState::PAUSED;
+    Serial.println("PowerManager timer state set to paused");
+}

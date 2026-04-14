@@ -90,6 +90,7 @@ private:
     bool lastDisplayedWiFiEnabled;
     bool lastDisplayedWiFiConnected;
     bool lastDisplayedStatusPage;
+    bool zeroWeightLatched;
     
     // Status page system
     bool showingStatusPage;
@@ -98,12 +99,15 @@ private:
     static const unsigned long ACTIVE_REFRESH_INTERVAL = 100; // 10 FPS while brewing/timing
     static const unsigned long IDLE_REFRESH_INTERVAL = 750; // Slow redraw when stable
     static const unsigned long STATUS_REFRESH_INTERVAL = 1000; // Status page only needs 1 Hz
+    static constexpr float ZERO_DISPLAY_ENTER_THRESHOLD = 0.15f;
+    static constexpr float ZERO_DISPLAY_EXIT_THRESHOLD = 0.25f;
     
     void drawWeight(float weight);
     void showWeightWithFlowAndTimer(float weight); // Main display showing weight, flow rate, and timer
     void setupDisplay();
     void drawBluetoothStatus(); // Draw Bluetooth connection status icon
     void drawBatteryStatus(); // Draw battery status with 3-segment indicator
+    float normalizeDisplayedWeight(float weight);
 };
 
 #endif
