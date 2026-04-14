@@ -63,12 +63,15 @@ private:
     float lastWeight;
     int8_t connectionRSSI; // Store RSSI value for connected device
     uint16_t connectionHandle; // Store connection handle for RSSI queries
+    bool fastAdvertisingMode;
+    uint32_t advertisingModeStart;
     
     // WeighMyBru protocol constants
     static const uint8_t PRODUCT_NUMBER = 0x03;
     static const size_t PROTOCOL_LENGTH = 20;
     static const uint32_t HEARTBEAT_INTERVAL = 2000; // 2 seconds
     static const uint32_t WEIGHT_SEND_INTERVAL = 50; // 50ms (20 updates/sec) - faster for GaggiMate
+    static const uint32_t FAST_ADVERTISING_WINDOW = 30000; // 30 seconds after boot/disconnect
     
     // WeighMyBru UUIDs - unique to avoid conflicts with Bookoo scales
     static const char* SERVICE_UUID;
@@ -77,6 +80,7 @@ private:
     static const char* COMMAND_CHARACTERISTIC_UUID;
     
     void initializeBLE();
+    void configureAdvertisingMode(bool fastMode);
     void startAdvertising();
     void stopAdvertising();
     void sendMessage(WeighMyBruMessageType msgType, const uint8_t* payload, size_t length);

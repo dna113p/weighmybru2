@@ -81,11 +81,23 @@ private:
     bool timerRunning;
     bool timerPaused;
     float lastFlowRate; // Store last flow rate for comparison
+    unsigned long lastDisplayRefresh;
+    float lastDisplayedWeight;
+    float lastDisplayedFlowRate;
+    int lastDisplayedTimerTenths;
+    int lastDisplayedBatteryPercentage;
+    bool lastDisplayedBluetoothConnected;
+    bool lastDisplayedWiFiEnabled;
+    bool lastDisplayedWiFiConnected;
+    bool lastDisplayedStatusPage;
     
     // Status page system
     bool showingStatusPage;
     unsigned long statusPageStartTime;
     static const unsigned long STATUS_PAGE_TIMEOUT = 10000; // 10 seconds timeout
+    static const unsigned long ACTIVE_REFRESH_INTERVAL = 100; // 10 FPS while brewing/timing
+    static const unsigned long IDLE_REFRESH_INTERVAL = 750; // Slow redraw when stable
+    static const unsigned long STATUS_REFRESH_INTERVAL = 1000; // Status page only needs 1 Hz
     
     void drawWeight(float weight);
     void showWeightWithFlowAndTimer(float weight); // Main display showing weight, flow rate, and timer

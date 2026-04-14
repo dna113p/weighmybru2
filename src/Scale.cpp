@@ -3,13 +3,20 @@
 #include "Calibration.h"
 #include "FlowRate.h"
 
+namespace {
+const int FAST_TARE_BASELINE_SAMPLES = 6;
+const float FAST_TARE_STABLE_RANGE_G = 0.12f;
+}
+
 Scale::Scale(uint8_t dataPin, uint8_t clockPin, float calibrationFactor)
     : dataPin(dataPin), clockPin(clockPin), calibrationFactor(calibrationFactor), currentWeight(0.0f),
       readingIndex(0), samplesInitialized(false), previousFilteredWeight(0), medianSamples(3), averageSamples(2),
-      currentFilterState(STABLE), lastBrewingActivity(0), lastStableWeight(0.0f) {
+      currentFilterState(STABLE), lastBrewingActivity(0), lastStableWeight(0.0f),
+      lastStableRawOffset(0), hasStableRawOffset(false), touchTareRawOffset(0), hasTouchTareRawOffset(false) {
     // Initialize readings array
     for (int i = 0; i < MAX_SAMPLES; i++) {
         readings[i] = 0.0f;
+        rawReadings[i] = 0;
     }
 }
 
@@ -71,7 +78,7 @@ bool Scale::begin() {
         
         // Only tare if connection is confirmed
         Serial.println("Performing initial tare...");
-        hx711.tare();
+        tare();
         
         Serial.println("Smart Scale filtering configured:");
         Serial.println("Brewing threshold: " + String(brewingThreshold) + "g");
@@ -106,25 +113,42 @@ void Scale::tare(uint8_t times) {
         flowRatePtr->pauseCalculation();
     }
     
-    Serial.println("Taring scale...");
-    hx711.tare(times);
-    Serial.println("Tare complete");
+    Serial.printf("Performing precision tare with %u live samples...\n", times);
+    long tareOffset = readAverageRaw(times);
+    applyTareOffset(tareOffset);
+    Serial.println("Precision tare complete");
     
-    // Reset smart filter state after taring - return to stable mode
-    currentFilterState = STABLE;
-    lastBrewingActivity = 0;
-    currentWeight = 0.0f;
-    lastStableWeight = 0.0f;
-    
-    // Reinitialize sample buffer
-    samplesInitialized = false;
-    Serial.println("Smart filter reset to STABLE state");
-    
-    // Resume flow rate calculation after a short delay to ensure stable readings
+    // Resume flow rate calculation immediately. resumeCalculation() resets timing,
+    // so there is no value in blocking here after the tare completes.
     if (flowRatePtr != nullptr) {
-        delay(100); // Short delay to let scale stabilize
         flowRatePtr->resumeCalculation();
     }
+}
+
+bool Scale::tareFromStoredStable() {
+    if (!isConnected) {
+        Serial.println("Cannot tare from stored stable value: HX711 not connected");
+        return false;
+    }
+    
+    if (!hasStableRawOffset && !hasTouchTareRawOffset) {
+        Serial.println("No stored stable baseline available for fast tare");
+        return false;
+    }
+    
+    if (flowRatePtr != nullptr) {
+        flowRatePtr->pauseCalculation();
+    }
+    
+    long tareOffset = hasTouchTareRawOffset ? touchTareRawOffset : lastStableRawOffset;
+    Serial.println("Applying fast tare from stored stable baseline...");
+    applyTareOffset(tareOffset);
+    
+    if (flowRatePtr != nullptr) {
+        flowRatePtr->resumeCalculation();
+    }
+    
+    return true;
 }
 
 void Scale::set_scale(float factor) {
@@ -168,28 +192,32 @@ float Scale::getWeight() {
         return currentWeight;  // Return last known value if not ready
     }
     
-    float rawReading = hx711.get_units(1);
+    long rawReading = hx711.read();
+    float rawUnits = (rawReading - hx711.get_offset()) / calibrationFactor;
     
     // Handle NaN or invalid readings
-    if (isnan(rawReading)) {
+    if (isnan(rawUnits)) {
         return currentWeight;
     }
     
     // Initialize sample buffer on first valid reading
     if (!samplesInitialized) {
-        initializeSamples(rawReading);
-        currentWeight = rawReading;
-        lastStableWeight = rawReading;
+        initializeSamples(rawUnits, rawReading);
+        currentWeight = rawUnits;
+        lastStableWeight = rawUnits;
+        lastStableRawOffset = rawReading;
+        hasStableRawOffset = true;
         currentFilterState = STABLE;
         return currentWeight;
     }
     
     // Store reading in circular buffer
-    readings[readingIndex] = rawReading;
+    readings[readingIndex] = rawUnits;
+    rawReadings[readingIndex] = rawReading;
     readingIndex = (readingIndex + 1) % MAX_SAMPLES;
     
     // Smart filtering based on brewing activity detection
-    float weightChange = abs(rawReading - currentWeight);
+    float weightChange = abs(rawUnits - currentWeight);
     bool brewingDetected = false;
     
     // Detect brewing activity using configurable threshold
@@ -241,9 +269,9 @@ float Scale::getWeight() {
     
     // Handle rapid changes (>5g) with immediate response regardless of filter state
     if (weightChange > 5.0f) {
-        filteredWeight = rawReading;
+        filteredWeight = rawUnits;
         // Reset sample buffer for immediate response
-        initializeSamples(rawReading);
+        initializeSamples(rawUnits, rawReading);
         // Update state appropriately
         if (currentFilterState == STABLE) {
             currentFilterState = BREWING;
@@ -252,6 +280,7 @@ float Scale::getWeight() {
     }
     
     currentWeight = filteredWeight;
+    updateStableBaseline();
     return currentWeight;
 }
 
@@ -266,9 +295,10 @@ long Scale::getRawValue() {
     return hx711.get_value(1); // Get raw value from HX711
 }
 
-void Scale::initializeSamples(float initialValue) {
+void Scale::initializeSamples(float initialValue, long initialRaw) {
     for (int i = 0; i < MAX_SAMPLES; i++) {
         readings[i] = initialValue;
+        rawReadings[i] = initialRaw;
     }
     samplesInitialized = true;
 }
@@ -310,6 +340,90 @@ float Scale::averageFilter(int samples) {
     }
     
     return sum / validSamples; // Return simple average without additional smoothing
+}
+
+long Scale::averageRawFilter(int samples) {
+    if (samples > MAX_SAMPLES) samples = MAX_SAMPLES;
+    
+    long long sum = 0;
+    int validSamples = 0;
+    
+    for (int i = 0; i < samples; i++) {
+        int idx = (readingIndex - 1 - i + MAX_SAMPLES) % MAX_SAMPLES;
+        sum += rawReadings[idx];
+        validSamples++;
+    }
+    
+    return validSamples > 0 ? (long)(sum / validSamples) : 0;
+}
+
+long Scale::readAverageRaw(uint8_t times) {
+    if (times == 0) {
+        times = 1;
+    }
+    return hx711.read_average(times);
+}
+
+void Scale::applyTareOffset(long rawOffset) {
+    hx711.set_offset(rawOffset);
+    lastStableRawOffset = rawOffset;
+    hasStableRawOffset = true;
+    touchTareRawOffset = 0;
+    hasTouchTareRawOffset = false;
+    
+    currentFilterState = STABLE;
+    lastBrewingActivity = 0;
+    currentWeight = 0.0f;
+    lastStableWeight = 0.0f;
+    initializeSamples(0.0f, rawOffset);
+    
+    Serial.println("Smart filter reset to STABLE state");
+}
+
+void Scale::updateStableBaseline() {
+    if (!hasRecentStableWindow(FAST_TARE_BASELINE_SAMPLES, FAST_TARE_STABLE_RANGE_G)) {
+        return;
+    }
+    
+    lastStableRawOffset = averageRawFilter(FAST_TARE_BASELINE_SAMPLES);
+    hasStableRawOffset = true;
+    lastStableWeight = averageFilter(FAST_TARE_BASELINE_SAMPLES);
+}
+
+void Scale::captureTouchTareBaseline() {
+    if (!hasStableRawOffset) {
+        return;
+    }
+    
+    touchTareRawOffset = lastStableRawOffset;
+    hasTouchTareRawOffset = true;
+}
+
+void Scale::clearTouchTareBaseline() {
+    touchTareRawOffset = 0;
+    hasTouchTareRawOffset = false;
+}
+
+bool Scale::hasRecentStableWindow(int samples, float maxRangeGrams) const {
+    if (!samplesInitialized || samples <= 0 || samples > MAX_SAMPLES) {
+        return false;
+    }
+    
+    float minReading = readings[(readingIndex - 1 + MAX_SAMPLES) % MAX_SAMPLES];
+    float maxReading = minReading;
+    
+    for (int i = 0; i < samples; i++) {
+        int idx = (readingIndex - 1 - i + MAX_SAMPLES) % MAX_SAMPLES;
+        float reading = readings[idx];
+        if (reading < minReading) {
+            minReading = reading;
+        }
+        if (reading > maxReading) {
+            maxReading = reading;
+        }
+    }
+    
+    return (maxReading - minReading) <= maxRangeGrams;
 }
 
 // Filter parameter setters with validation

@@ -8,7 +8,8 @@ class Scale {
 public:
     Scale(uint8_t dataPin, uint8_t clockPin, float calibrationFactor);
     bool begin();  // Returns true if successful, false if HX711 fails
-    void tare(uint8_t times = 20);
+    void tare(uint8_t times = 20); // Precision tare using fresh live samples
+    bool tareFromStoredStable(); // Fast tare using the most recent stable raw baseline
     void set_scale(float factor);
     float getWeight();
     float getCurrentWeight();
@@ -35,6 +36,8 @@ public:
     
     // FlowRate integration for tare operations
     void setFlowRatePtr(class FlowRate* flowRatePtr);
+    void captureTouchTareBaseline();
+    void clearTouchTareBaseline();
     
 private:
     HX711 hx711;
@@ -49,6 +52,7 @@ private:
     // Smart filtering variables - reduced buffer for faster response
     static const int MAX_SAMPLES = 10;  // Reduced from 50 to 10 for faster response
     float readings[MAX_SAMPLES];
+    long rawReadings[MAX_SAMPLES];
     int readingIndex = 0;
     bool samplesInitialized = false;
     float previousFilteredWeight = 0;
@@ -62,6 +66,10 @@ private:
     FilterState currentFilterState = STABLE;
     unsigned long lastBrewingActivity = 0;  // Track when brewing was last detected
     float lastStableWeight = 0.0f;          // Last weight when in stable state
+    long lastStableRawOffset = 0;           // Raw baseline captured while stable
+    bool hasStableRawOffset = false;
+    long touchTareRawOffset = 0;            // Stable baseline captured before touch disturbance
+    bool hasTouchTareRawOffset = false;
     
     // Configurable filtering parameters
     float brewingThreshold = 0.15f;  // Keep for API compatibility
@@ -72,7 +80,12 @@ private:
     // Filter methods
     float medianFilter(int samples);
     float averageFilter(int samples);
-    void initializeSamples(float initialValue);
+    long averageRawFilter(int samples);
+    long readAverageRaw(uint8_t times);
+    void applyTareOffset(long rawOffset);
+    void updateStableBaseline();
+    bool hasRecentStableWindow(int samples, float maxRangeGrams) const;
+    void initializeSamples(float initialValue, long initialRaw);
 };
 
 #endif

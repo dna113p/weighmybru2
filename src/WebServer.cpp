@@ -329,7 +329,7 @@ void setupWebServer(Scale &scale, FlowRate &flowRate, BluetoothScale &bluetoothS
   });
 
   server.on("/api/tare", HTTP_POST, [&scale, &display, &flowRate](AsyncWebServerRequest *request){
-    scale.tare(20);
+    scale.tare();
     
     // Reset timer when taring (prepare for fresh brew)
     display.resetTimer();

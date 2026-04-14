@@ -35,6 +35,9 @@ static bool filesystemAvailable = false;
 static bool filesystemChecked = false;
 static unsigned long lastFilesystemError = 0;
 const unsigned long FILESYSTEM_ERROR_COOLDOWN = 30000; // Show error message every 30 seconds max
+const unsigned long WIFI_RESET_DELAY_MS = 150;
+const unsigned long WIFI_MODE_SWITCH_DELAY_MS = 100;
+const unsigned long WIFI_AP_SWITCH_DELAY_MS = 150;
 
 // AP credentials
 const char* ap_ssid = "WeighMyBru-AP";
@@ -248,7 +251,7 @@ void setupWiFi() {
     Serial.println("Resetting WiFi subsystem...");
     WiFi.disconnect(true);
     WiFi.mode(WIFI_OFF);
-    delay(500); // Longer delay for complete reset
+    delay(WIFI_RESET_DELAY_MS);
     
     // Enable WiFi persistent mode for automatic reconnection
     WiFi.persistent(true);
@@ -277,7 +280,7 @@ void setupWiFi() {
         
         // Try STA mode first for lower power consumption
         WiFi.mode(WIFI_STA);
-        delay(500); // Brief delay for mode switch
+        delay(WIFI_MODE_SWITCH_DELAY_MS);
         
         #ifdef ESP_IDF_VERSION_MAJOR
             // Set WiFi protocol to include long-range mode for better weak-signal performance
@@ -293,7 +296,7 @@ void setupWiFi() {
             }
         #endif
         
-        delay(500); // Additional delay for protocol change
+        delay(WIFI_MODE_SWITCH_DELAY_MS);
         
         // ANTENNA FIX: Reapply power settings after mode switch
         // Mode switch can reset power levels, so reapply the fix
@@ -357,7 +360,7 @@ void setupWiFi() {
     // Fallback to AP mode if STA failed or no credentials exist
     Serial.println("Starting AP mode...");
     WiFi.mode(WIFI_AP);
-    delay(1000); // Ensure mode switch is stable
+    delay(WIFI_AP_SWITCH_DELAY_MS);
     
     // Configure AP with optimized settings for maximum visibility
     WiFi.softAPConfig(IPAddress(192, 168, 4, 1), IPAddress(192, 168, 4, 1), IPAddress(255, 255, 255, 0));
@@ -628,11 +631,11 @@ void switchToAPMode() {
     Serial.println("=== SWITCHING TO AP MODE ===");
     Serial.println("Disconnecting from STA mode...");
     WiFi.disconnect(true);
-    delay(500);
+    delay(WIFI_MODE_SWITCH_DELAY_MS);
     
     Serial.println("Setting AP mode...");
     WiFi.mode(WIFI_AP);
-    delay(1000); // Allow mode switch to stabilize
+    delay(WIFI_AP_SWITCH_DELAY_MS);
     
     // Restart AP with same settings as setupWiFi()
     Serial.println("Starting AP broadcast...");
@@ -830,6 +833,10 @@ void enableWiFi() {
     
     // If WiFi was previously off, restore it
     if (WiFi.getMode() == WIFI_OFF) {
+        // Restore reconnect behavior that is explicitly disabled in disableWiFi()
+        WiFi.persistent(true);
+        WiFi.setAutoReconnect(true);
+        
         // Try to restore to STA mode first if we have credentials
         if (loadWiFiCredentialsFromEEPROM() && !cachedSSID.isEmpty()) {
             Serial.println("Attempting to reconnect to saved network...");
@@ -855,11 +862,18 @@ void disableWiFi() {
     // Stop web server first to prevent TCP/IP stack issues
     stopWebServer();
     
+    // Stop mDNS so the network stack can fully shut down
+    MDNS.end();
+    
     // Save current mode before disabling
     previousWiFiMode = WiFi.getMode();
     
     // Save the disabled state
     saveWiFiEnabledState(false);
+    
+    // Prevent the WiFi stack from waking itself back up
+    WiFi.setAutoReconnect(false);
+    WiFi.persistent(false);
     
     // Gracefully close active connections before disabling WiFi
     Serial.println("Closing active connections...");
@@ -878,11 +892,23 @@ void disableWiFi() {
         WiFi.softAPdisconnect(true);
     }
     
+    #ifdef ESP_IDF_VERSION_MAJOR
+        // Stop the ESP-IDF WiFi driver as well, so the radio is not left running.
+        esp_err_t stopResult = esp_wifi_stop();
+        if (stopResult != ESP_OK && stopResult != ESP_ERR_WIFI_NOT_INIT) {
+            Serial.printf("WARNING: esp_wifi_stop() failed: %s\n", esp_err_to_name(stopResult));
+        }
+    #endif
+    
     // Additional delay to ensure cleanup
     delay(200);
     
     // Now safely turn off WiFi
     WiFi.mode(WIFI_OFF);
+    
+    if (WiFi.getMode() != WIFI_OFF) {
+        Serial.println("WARNING: WiFi mode did not switch fully to OFF");
+    }
     
     Serial.println("WiFi disabled - battery saving mode active");
 }

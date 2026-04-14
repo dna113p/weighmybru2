@@ -33,7 +33,7 @@ private:
     // Delayed tare functionality for mounted touch sensors
     bool delayedTarePending;
     unsigned long delayedTareTime;
-    static const unsigned long TARE_DELAY = 1500; // 1.5 seconds delay after touch release
+    static const unsigned long TARE_DELAY = 75; // Short debounce-style delay after touch release
     static const unsigned long WIFI_TOGGLE_DURATION = 5000; // 5 seconds for WiFi toggle (longer than status page)
     
     void handleTouch();

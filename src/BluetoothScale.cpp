@@ -16,7 +16,7 @@ BluetoothScale::BluetoothScale()
       weightCharacteristic(nullptr), gaggiMateWeightCharacteristic(nullptr), 
       commandCharacteristic(nullptr), advertising(nullptr), deviceConnected(false), 
       oldDeviceConnected(false), lastHeartbeat(0), lastWeightSent(0), lastWeight(0.0f),
-      connectionRSSI(-100), connectionHandle(0) {
+      connectionRSSI(-100), connectionHandle(0), fastAdvertisingMode(true), advertisingModeStart(0) {
 }
 
 BluetoothScale::~BluetoothScale() {
@@ -202,16 +202,34 @@ void BluetoothScale::initializeBLE() {
     advertising->setMinPreferred(0x06);
     advertising->setMaxPreferred(0x12);
     
-    // Set minimum and maximum advertising intervals (in units of 0.625ms)
-    // 0x20 = 20ms, 0x40 = 40ms - balance between power and discoverability
-    advertising->setMinInterval(0x20);
-    advertising->setMaxInterval(0x40);
+    configureAdvertisingMode(true);
     
     Serial.println("BluetoothScale: Advertising configured:");
     Serial.println("  - Service UUID: " + String(SERVICE_UUID));
     Serial.println("  - Device Name: WeighMyBru");
     Serial.println("  - Scan Response: Enabled");
     Serial.println("BluetoothScale: BLE initialization completed successfully");
+}
+
+void BluetoothScale::configureAdvertisingMode(bool fastMode) {
+    if (!advertising) {
+        return;
+    }
+    
+    fastAdvertisingMode = fastMode;
+    advertisingModeStart = millis();
+    
+    if (fastMode) {
+        // 20-40ms: quick discovery right after boot/disconnect
+        advertising->setMinInterval(0x20);
+        advertising->setMaxInterval(0x40);
+        Serial.println("BluetoothScale: Fast advertising enabled");
+    } else {
+        // 500-1000ms: much lower idle power once the device has been idle for a while
+        advertising->setMinInterval(0x320);
+        advertising->setMaxInterval(0x640);
+        Serial.println("BluetoothScale: Slow advertising enabled for idle power saving");
+    }
 }
 
 void BluetoothScale::startAdvertising() {
@@ -239,6 +257,7 @@ void BluetoothScale::update() {
     // Handle connection state changes
     if (!deviceConnected && oldDeviceConnected) {
         delay(500); // Give the bluetooth stack time to get ready
+        configureAdvertisingMode(true);
         startAdvertising();
         Serial.println("BluetoothScale: Start advertising after disconnect");
         oldDeviceConnected = deviceConnected;
@@ -270,10 +289,17 @@ void BluetoothScale::update() {
             lastHeartbeat = now;
         }
     } else {
+        if (fastAdvertisingMode && (now - advertisingModeStart >= FAST_ADVERTISING_WINDOW)) {
+            stopAdvertising();
+            configureAdvertisingMode(false);
+            startAdvertising();
+        }
+        
         // Periodic advertising status (every 10 seconds when not connected)
         static uint32_t lastAdStatus = 0;
         if (now - lastAdStatus >= 10000) {
-            Serial.println("BluetoothScale: Advertising active, waiting for connection...");
+            Serial.printf("BluetoothScale: Advertising active (%s mode), waiting for connection...\n",
+                          fastAdvertisingMode ? "fast" : "slow");
             lastAdStatus = now;
         }
     }
@@ -414,7 +440,7 @@ uint8_t BluetoothScale::calculateChecksum(const uint8_t* data, size_t length) {
 void BluetoothScale::handleTareCommand() {
     if (scale) {
         Serial.println("BluetoothScale: Executing tare command");
-        scale->tare(10);
+        scale->tare();
         
         // Send tare confirmation
         uint8_t payload[] = {0x03, 0x0a, 0x01, 0x00, 0x00};

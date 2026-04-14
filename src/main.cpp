@@ -37,16 +37,26 @@ Display oledDisplay(sdaPin, sclPin, &scale, &flowRate);
 PowerManager powerManager(sleepTouchPin, &oledDisplay);
 BatteryMonitor batteryMonitor(batteryPin);
 
+#ifdef BOARD_ARCH_ESP32C6
+static const unsigned long USB_CDC_ENUMERATION_TIMEOUT_MS = 250;
+#else
+static const unsigned long USB_CDC_ENUMERATION_TIMEOUT_MS = 0;
+#endif
+
+static const unsigned long FACTORY_RESET_BOOT_DELAY_MS = 250;
+static const unsigned long WAKE_MESSAGE_DELAY_MS = 150;
+static const unsigned long POST_BLE_INIT_DELAY_MS = 200;
+static const unsigned long POST_WIFI_INIT_DELAY_MS = 250;
+static const unsigned long PRE_READY_SCREEN_DELAY_MS = 25;
+
 void setup() {
   Serial.begin(115200);
   
 #ifdef BOARD_ARCH_ESP32C6
-  // ESP32-C6 USB-CDC needs extra time to enumerate
-  for (int i = 0; i < 50; i++) {
-    Serial.println("*** BOOT START ***");
-    Serial.flush();
-    delay(100);
-    if (Serial) break;
+  // Give USB-CDC a short window to enumerate without stalling cold boot for seconds.
+  unsigned long usbWaitStart = millis();
+  while (!Serial && millis() - usbWaitStart < USB_CDC_ENUMERATION_TIMEOUT_MS) {
+    delay(25);
   }
 #endif
   
@@ -67,7 +77,7 @@ void setup() {
   if (digitalRead(touchPin) == HIGH) {
     Serial.println("FACTORY RESET: Touch pin held during boot - clearing WiFi credentials");
     clearWiFiCredentials();
-    delay(1000);
+    delay(FACTORY_RESET_BOOT_DELAY_MS);
   }
   
   // CRITICAL: Initialize BLE FIRST before WiFi to prevent radio conflicts
@@ -77,11 +87,8 @@ void setup() {
 #if HAS_PSRAM
   Serial.printf("Free PSRAM before BLE init: %u bytes\n", ESP.getFreePsram());
 #endif
-  Serial.flush();  // Ensure message is output
-  
   try {
     Serial.println("Calling bluetoothScale.begin()...");
-    Serial.flush();
     bluetoothScale.begin();  // Initialize BLE without scale reference
     Serial.println("BLE initialized successfully - GaggiMate should be able to connect");
     Serial.printf("Free heap after BLE init: %u bytes\n", ESP.getFreeHeap());
@@ -93,7 +100,6 @@ void setup() {
     Serial.printf("Free heap after BLE fail: %u bytes\n", ESP.getFreeHeap());
   }
   Serial.println("=== BLE INITIALIZATION COMPLETE ===");
-  Serial.flush();
   
   // Initialize display with error handling - don't block if display fails
   Serial.println("Initializing display...");
@@ -112,8 +118,7 @@ void setup() {
   switch(wakeup_reason) {
     case ESP_SLEEP_WAKEUP_EXT0:
       Serial.println("Wakeup caused by external signal (touch sensor)");
-      // Show the same starting message as normal boot for consistency
-      delay(1500);
+      delay(WAKE_MESSAGE_DELAY_MS);
       break;
     case ESP_SLEEP_WAKEUP_EXT1:
       Serial.println("Wakeup caused by external signal using RTC_CNTL");
@@ -126,12 +131,11 @@ void setup() {
       break;
     default:
       Serial.println("Wakeup was not caused by deep sleep: " + String(wakeup_reason));
-      // For normal startup, the begin() method already shows a startup message
-      delay(1000);
+      delay(WAKE_MESSAGE_DELAY_MS);
       break;
   }
   //Wait for BLE to finish intitalizing before starting WiFi
-  delay(1500); 
+  delay(POST_BLE_INIT_DELAY_MS); 
   
   setupWiFi();
   
@@ -172,7 +176,7 @@ void setup() {
   Serial.println("============================");
 
   // Wait for WiFi to fully stabilize after BLE is already running
-  delay(1500);
+  delay(POST_WIFI_INIT_DELAY_MS);
   Serial.printf("Version: %s\n", ESP.getSdkVersion());
   // Initialize scale with error handling - don't block web server if HX711 fails
   Serial.println("Initializing scale...");
@@ -217,7 +221,7 @@ void setup() {
   batteryMonitor.begin();
 
   // Show IP addresses and welcome message if display is available
-  delay(100); // Small delay to ensure WiFi is fully initialized
+  delay(PRE_READY_SCREEN_DELAY_MS);
   if (oledDisplay.isConnected()) {
     oledDisplay.showIPAddresses();
   }

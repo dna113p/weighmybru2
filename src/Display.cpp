@@ -6,12 +6,16 @@
 #include "BatteryMonitor.h"
 #include <WiFi.h>
 #include "WiFiManager.h"
+#include <math.h>
 
 Display::Display(uint8_t sdaPin, uint8_t sclPin, Scale* scale, FlowRate* flowRate)
     : sdaPin(sdaPin), sclPin(sclPin), scalePtr(scale), flowRatePtr(flowRate), bluetoothPtr(nullptr), powerManagerPtr(nullptr), batteryPtr(nullptr), wifiManagerPtr(nullptr),
       messageStartTime(0), messageDuration(2000), showingMessage(false), 
       timerStartTime(0), timerPausedTime(0), timerRunning(false), timerPaused(false),
-      lastFlowRate(0.0), showingStatusPage(false), statusPageStartTime(0) {
+      lastFlowRate(0.0), lastDisplayRefresh(0), lastDisplayedWeight(0.0f), lastDisplayedFlowRate(0.0f),
+      lastDisplayedTimerTenths(-1), lastDisplayedBatteryPercentage(-1), lastDisplayedBluetoothConnected(false),
+      lastDisplayedWiFiEnabled(true), lastDisplayedWiFiConnected(false), lastDisplayedStatusPage(false),
+      showingStatusPage(false), statusPageStartTime(0) {
     display = new Adafruit_SSD1306(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 }
 
@@ -20,11 +24,12 @@ bool Display::begin() {
     
     // Initialize I2C with custom pins
     Wire.begin(sdaPin, sclPin);
+    Wire.setClock(400000);
     
     // Test I2C connection first with timeout
     Serial.println("Testing I2C connection to display...");
     unsigned long startTime = millis();
-    const unsigned long I2C_TIMEOUT = 3000; // 3 second timeout
+    const unsigned long I2C_TIMEOUT = 500; // Fail fast if the display is not present
     
     bool i2cResponding = false;
     Wire.beginTransmission(SCREEN_ADDRESS);
@@ -119,8 +124,10 @@ void Display::update() {
         return;
     }
     
+    unsigned long now = millis();
+    
     // Check if status page timeout has elapsed
-    if (showingStatusPage && millis() - statusPageStartTime > STATUS_PAGE_TIMEOUT) {
+    if (showingStatusPage && now - statusPageStartTime > STATUS_PAGE_TIMEOUT) {
         showingStatusPage = false;
         Serial.println("Status page timeout, returning to main display");
     }
@@ -133,19 +140,60 @@ void Display::update() {
             effectiveDuration = 1000; // Half of default duration for quick feedback
         }
         
-        if (millis() - messageStartTime > effectiveDuration) {
+        if (now - messageStartTime > effectiveDuration) {
             showingMessage = false;
             Serial.println("Message cleared, returning to main display");
         }
     }
     
+    if (showingMessage) {
+        return;
+    }
+    
     // Show status page if active
     if (showingStatusPage) {
+        if (lastDisplayedStatusPage && (now - lastDisplayRefresh < STATUS_REFRESH_INTERVAL)) {
+            return;
+        }
+        lastDisplayedStatusPage = true;
+        lastDisplayRefresh = now;
         showStatusPage();
     }
     // Show normal weight display when not showing message or status page
-    else if (!showingMessage && scalePtr != nullptr) {
+    else if (scalePtr != nullptr) {
         float weight = scalePtr->getCurrentWeight();
+        float flowRate = flowRatePtr ? flowRatePtr->getFlowRate() : 0.0f;
+        int timerTenths = (int)(getTimerSeconds() * 10.0f + 0.5f);
+        int batteryPercentage = batteryPtr ? batteryPtr->getBatteryPercentage() : -1;
+        bool bluetoothConnected = bluetoothPtr && bluetoothPtr->isConnected();
+        bool wifiEnabled = isWiFiEnabled();
+        bool wifiConnected = (WiFi.status() == WL_CONNECTED);
+        
+        bool activeDisplay = timerRunning || fabsf(flowRate) >= 0.1f || fabsf(weight - lastDisplayedWeight) >= 0.3f;
+        unsigned long refreshInterval = activeDisplay ? ACTIVE_REFRESH_INTERVAL : IDLE_REFRESH_INTERVAL;
+        bool contentChanged =
+            !lastDisplayedStatusPage ||
+            fabsf(weight - lastDisplayedWeight) >= 0.1f ||
+            fabsf(flowRate - lastDisplayedFlowRate) >= 0.1f ||
+            timerTenths != lastDisplayedTimerTenths ||
+            batteryPercentage != lastDisplayedBatteryPercentage ||
+            bluetoothConnected != lastDisplayedBluetoothConnected ||
+            wifiEnabled != lastDisplayedWiFiEnabled ||
+            wifiConnected != lastDisplayedWiFiConnected;
+        
+        if (!contentChanged && (now - lastDisplayRefresh < refreshInterval)) {
+            return;
+        }
+        
+        lastDisplayedStatusPage = false;
+        lastDisplayRefresh = now;
+        lastDisplayedWeight = weight;
+        lastDisplayedFlowRate = flowRate;
+        lastDisplayedTimerTenths = timerTenths;
+        lastDisplayedBatteryPercentage = batteryPercentage;
+        lastDisplayedBluetoothConnected = bluetoothConnected;
+        lastDisplayedWiFiEnabled = wifiEnabled;
+        lastDisplayedWiFiConnected = wifiConnected;
         showWeightWithFlowAndTimer(weight);
     }
 }
@@ -565,7 +613,7 @@ void Display::showIPAddresses() {
     display->print(line2);
     
     display->display();
-    delay(1000); // Show ready message for 1 second, then continue to normal display
+    delay(250); // Brief confirmation without holding up startup
 }
 
 void Display::clear() {

@@ -28,6 +28,9 @@ void TouchSensor::update() {
                 // Touch started - record start time
                 touchStartTime = currentTime;
                 longPressDetected = false;
+                if (scalePtr != nullptr) {
+                    scalePtr->captureTouchTareBaseline();
+                }
                 Serial.println("Touch started");
             } else {
                 // Touch ended
@@ -36,10 +39,16 @@ void TouchSensor::update() {
                 if (!longPressDetected) {
                     if (pressDuration >= WIFI_TOGGLE_DURATION) {
                         // Very long press (5+ seconds) - WiFi toggle
+                        if (scalePtr != nullptr) {
+                            scalePtr->clearTouchTareBaseline();
+                        }
                         handleWiFiToggle();
                         Serial.println("Very long press detected - WiFi toggle");
                     } else if (pressDuration >= 500) {
                         // Medium press (500ms+) - Status page toggle
+                        if (scalePtr != nullptr) {
+                            scalePtr->clearTouchTareBaseline();
+                        }
                         handleStatusPageToggle();
                         Serial.println("Medium press detected - status page toggle");
                     } else {
@@ -60,6 +69,9 @@ void TouchSensor::update() {
     if (currentTouchState && !longPressDetected && touchStartTime > 0) {
         if (currentTime - touchStartTime >= WIFI_TOGGLE_DURATION) {
             longPressDetected = true;
+            if (scalePtr != nullptr) {
+                scalePtr->clearTouchTareBaseline();
+            }
             handleWiFiToggle();
             Serial.println("Very long press detected (during hold) - WiFi toggle");
         }
@@ -144,7 +156,7 @@ void TouchSensor::scheduleDelayedTare() {
         Serial.println("Taring message displayed");
     }
     
-    Serial.println("Scheduling delayed tare in 1.5 seconds...");
+    Serial.println("Scheduling delayed tare...");
     delayedTarePending = true;
     delayedTareTime = millis() + TARE_DELAY;
 }
@@ -156,7 +168,9 @@ void TouchSensor::checkDelayedTare() {
         
         // Perform the actual tare operation without showing message again
         if (scalePtr != nullptr) {
-            scalePtr->tare();
+            if (!scalePtr->tareFromStoredStable()) {
+                scalePtr->tare();
+            }
             Serial.println("Scale tared successfully");
             
             // Reset timer when manual tare is pressed
