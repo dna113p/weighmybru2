@@ -70,6 +70,8 @@ private:
     bool hasStableRawOffset = false;
     long touchTareRawOffset = 0;            // Stable baseline captured before touch disturbance
     bool hasTouchTareRawOffset = false;
+    unsigned long autoZeroEligibleStart = 0;
+    unsigned long lastAutoZeroAdjustTime = 0;
     
     // Configurable filtering parameters
     float brewingThreshold = 0.15f;  // Keep for API compatibility
@@ -83,7 +85,9 @@ private:
     long averageRawFilter(int samples);
     long readAverageRaw(uint8_t times);
     void applyTareOffset(long rawOffset);
+    void applyRawOffsetDelta(long rawDelta);
     void updateStableBaseline();
+    void updateAutoZero(unsigned long currentTime);
     bool hasRecentStableWindow(int samples, float maxRangeGrams) const;
     void initializeSamples(float initialValue, long initialRaw);
 };

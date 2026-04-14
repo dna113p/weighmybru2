@@ -6,6 +6,12 @@
 namespace {
 const int FAST_TARE_BASELINE_SAMPLES = 6;
 const float FAST_TARE_STABLE_RANGE_G = 0.12f;
+const int AUTO_ZERO_SAMPLES = 8;
+const float AUTO_ZERO_NEAR_ZERO_THRESHOLD_G = 0.20f;
+const float AUTO_ZERO_STABLE_RANGE_G = 0.05f;
+const float AUTO_ZERO_MAX_STEP_G = 0.02f;
+const unsigned long AUTO_ZERO_IDLE_DELAY_MS = 8000;
+const unsigned long AUTO_ZERO_ADJUST_INTERVAL_MS = 400;
 }
 
 Scale::Scale(uint8_t dataPin, uint8_t clockPin, float calibrationFactor)
@@ -281,6 +287,7 @@ float Scale::getWeight() {
     
     currentWeight = filteredWeight;
     updateStableBaseline();
+    updateAutoZero(currentTime);
     return currentWeight;
 }
 
@@ -373,11 +380,32 @@ void Scale::applyTareOffset(long rawOffset) {
     
     currentFilterState = STABLE;
     lastBrewingActivity = 0;
+    autoZeroEligibleStart = 0;
+    lastAutoZeroAdjustTime = 0;
     currentWeight = 0.0f;
     lastStableWeight = 0.0f;
     initializeSamples(0.0f, rawOffset);
     
     Serial.println("Smart filter reset to STABLE state");
+}
+
+void Scale::applyRawOffsetDelta(long rawDelta) {
+    if (rawDelta == 0) {
+        return;
+    }
+
+    long newOffset = hx711.get_offset() + rawDelta;
+    hx711.set_offset(newOffset);
+
+    float deltaGrams = rawDelta / calibrationFactor;
+    for (int i = 0; i < MAX_SAMPLES; i++) {
+        readings[i] -= deltaGrams;
+    }
+
+    currentWeight -= deltaGrams;
+    lastStableWeight -= deltaGrams;
+    lastStableRawOffset = newOffset;
+    hasStableRawOffset = true;
 }
 
 void Scale::updateStableBaseline() {
@@ -388,6 +416,59 @@ void Scale::updateStableBaseline() {
     lastStableRawOffset = averageRawFilter(FAST_TARE_BASELINE_SAMPLES);
     hasStableRawOffset = true;
     lastStableWeight = averageFilter(FAST_TARE_BASELINE_SAMPLES);
+}
+
+void Scale::updateAutoZero(unsigned long currentTime) {
+    if (currentFilterState != STABLE || hasTouchTareRawOffset) {
+        autoZeroEligibleStart = 0;
+        return;
+    }
+
+    if (!hasRecentStableWindow(AUTO_ZERO_SAMPLES, AUTO_ZERO_STABLE_RANGE_G)) {
+        autoZeroEligibleStart = 0;
+        return;
+    }
+
+    float stableWeight = averageFilter(AUTO_ZERO_SAMPLES);
+    if (fabsf(stableWeight) > AUTO_ZERO_NEAR_ZERO_THRESHOLD_G) {
+        autoZeroEligibleStart = 0;
+        return;
+    }
+
+    if (autoZeroEligibleStart == 0) {
+        autoZeroEligibleStart = currentTime;
+        return;
+    }
+
+    if (currentTime - autoZeroEligibleStart < AUTO_ZERO_IDLE_DELAY_MS) {
+        return;
+    }
+
+    if (currentTime - lastAutoZeroAdjustTime < AUTO_ZERO_ADJUST_INTERVAL_MS) {
+        return;
+    }
+
+    long targetOffset = averageRawFilter(AUTO_ZERO_SAMPLES);
+    long currentOffset = hx711.get_offset();
+    long rawDelta = targetOffset - currentOffset;
+    long maxStepRaw = (long)(fabsf(calibrationFactor) * AUTO_ZERO_MAX_STEP_G);
+    if (maxStepRaw < 1) {
+        maxStepRaw = 1;
+    }
+
+    if (labs(rawDelta) < 1) {
+        return;
+    }
+
+    if (rawDelta > maxStepRaw) {
+        rawDelta = maxStepRaw;
+    } else if (rawDelta < -maxStepRaw) {
+        rawDelta = -maxStepRaw;
+    }
+
+    applyRawOffsetDelta(rawDelta);
+    lastAutoZeroAdjustTime = currentTime;
+    Serial.printf("Auto-zero trim applied: %.3fg\n", rawDelta / calibrationFactor);
 }
 
 void Scale::captureTouchTareBaseline() {
